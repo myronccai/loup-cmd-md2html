@@ -1,0 +1,110 @@
+@mode(host.dual)
+
+# md2html: read the input, convert it, optionally wrap it in a page, and
+# write it out.
+
+from appinfo import (APP_NAME, EXIT_OK, EXIT_FAILURE);
+from cli.args import (Options);
+from io.fs import (isDir);
+from io.path import (basename, dirname);
+from markdown.text import (escape_html);
+from markdown.render import (markdown_to_html, first_heading);
+
+pub const DEFAULT_TEMPLATE: string = "<!DOCTYPE html>\n<html>\n<head>\n<meta charset=\"utf-8\">\n<title>{{title}}</title>\n</head>\n<body>\n{{body}}</body>\n</html>\n";
+
+# The page title: --title, else the first heading, else the file name
+# without its extension, else "Untitled". Returned as HTML.
+pub func page_title(opts: Options, source: string): string {
+    if (opts.title_given) {
+        return escape_html(opts.title);
+    }
+    let heading = first_heading(source);
+    if (heading.len() > 0) {
+        return heading;
+    }
+    if (opts.input != "-") {
+        var name = basename(opts.input);
+        let dot = name.index_of(".");
+        if (dot > 0) {
+            name = name.slice(0, dot);
+        }
+        return escape_html(name);
+    }
+    return "Untitled";
+}
+
+# Fills {{title}} and {{body}} in a page template.
+pub func fill_template(layout: string, title: string, body: string): string {
+    # Split on {{body}} first so that a {{title}} inside the body text is
+    # left alone.
+    let parts = layout.split("{{body}}");
+    var filled: list[string] = [];
+    for (part in parts) {
+        filled.push(part.replace("{{title}}", title));
+    }
+    return filled.join(body);
+}
+
+# The complete output for a source text.
+pub func convert(opts: Options, source: string, layout: string): string {
+    let body = markdown_to_html(source);
+    if (!opts.standalone) {
+        return body;
+    }
+    return fill_template(layout, page_title(opts, source), body);
+}
+
+# Why a file cannot be read ("" when it can).
+func read_problem(path: string): string {
+    if (!exists(path)) {
+        return path + ": No such file or directory";
+    }
+    if (isDir(path)) {
+        return path + ": Is a directory";
+    }
+    return "";
+}
+
+pub func run_md2html(opts: Options): int {
+    var source = "";
+    if (opts.input == "-") {
+        source = readText("/dev/stdin");
+    } else {
+        let problem = read_problem(opts.input);
+        if (problem.len() > 0) {
+            printErr(APP_NAME + ": " + problem);
+            return EXIT_FAILURE;
+        }
+        source = readText(opts.input);
+    }
+
+    var layout = DEFAULT_TEMPLATE;
+    if (opts.page_file.len() > 0) {
+        let problem = read_problem(opts.page_file);
+        if (problem.len() > 0) {
+            printErr(APP_NAME + ": " + problem);
+            return EXIT_FAILURE;
+        }
+        layout = readText(opts.page_file);
+    }
+
+    let html = convert(opts, source, layout);
+    if (opts.output.len() == 0) {
+        print(html);
+        return EXIT_OK;
+    }
+    var dir = dirname(opts.output);
+    if (dir.len() == 0) {
+        dir = ".";
+    }
+    if (!isDir(dir)) {
+        printErr(APP_NAME + ": " + opts.output + ": No such file or directory");
+        return EXIT_FAILURE;
+    }
+    if (isDir(opts.output)) {
+        printErr(APP_NAME + ": " + opts.output + ": Is a directory");
+        return EXIT_FAILURE;
+    }
+    writeText(opts.output, html);
+    return EXIT_OK;
+}

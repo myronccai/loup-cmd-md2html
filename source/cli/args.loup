@@ -1,45 +1,40 @@
 @mode(host.dual)
 
-# Command-line parsing. Loup 1.26 has no CLI library, so arguments are
-# parsed by hand into an Options value.
+# Command-line parsing for md2html:
 #
-# Grammar: [OPTIONS] COMMAND [OPERANDS...]
-#   Options may appear anywhere before `--`; everything after `--` is an
-#   operand. Value options accept `--name VALUE` and `--name=VALUE`.
-
-pub const DEFAULT_GREETING: string = "Hello";
+#   md2html [OPTION]... [FILE]
+#
+# Options may appear anywhere before `--`. Value options accept `-x VALUE`,
+# `--name VALUE` and `--name=VALUE`. FILE `-` (or none) is standard input.
 
 pub struct Options {
-    pub command: string;
-    pub operands: list[string];
     pub help: bool;
     pub version: bool;
-    pub verbose: bool;
-    pub shout: bool;
-    pub greeting: string;
+    pub input: string;
+    pub output: string;
+    pub standalone: bool;
+    pub page_file: string;
+    pub title: string;
+    pub title_given: bool;
 }
 
 pub func parse_args(argv: list[string]): Result[Options, string] {
-    var command = "";
-    var operands: list[string] = [];
     var help = false;
     var version = false;
-    var verbose = false;
-    var shout = false;
-    var greeting = DEFAULT_GREETING;
+    var operands: list[string] = [];
+    var output = "";
+    var standalone = false;
+    var page_file = "";
+    var title = "";
+    var title_given = false;
     var only_operands = false;
 
     var i = 0;
     while (i < argv.len()) {
         let arg = argv[i];
         i += 1;
-
         if (only_operands or arg == "-" or !arg.startsWith("-")) {
-            if (command.is_empty()) {
-                command = arg;
-            } else {
-                operands.push(arg);
-            }
+            operands.push(arg);
             continue;
         }
         if (arg == "--") {
@@ -47,52 +42,68 @@ pub func parse_args(argv: list[string]): Result[Options, string] {
             continue;
         }
 
-        # Split `--name=value` into its name and inline value.
         var name = arg;
-        var inline_value: Option[string] = None;
+        var value = "";
+        var has_value = false;
         if (arg.startsWith("--") and arg.contains("=")) {
-            let parts = arg.split("=");
-            name = parts[0];
-            inline_value = Some(parts.slice(1).join("="));
+            let at = arg.index_of("=");
+            name = arg.slice(0, at);
+            value = arg.slice(at + 1);
+            has_value = true;
         }
 
-        if (name == "-g" or name == "--greeting") {
-            match inline_value {
-                Some(v) => { greeting = v; },
-                None => {
-                    if (i >= argv.len()) {
-                        return Err(i"option '{$ name $}' requires a value");
-                    }
-                    greeting = argv[i];
-                    i += 1;
-                },
+        if (name == "-h" or name == "--help" or name == "-V" or name == "--version" or name == "-s" or name == "--standalone") {
+            if (has_value) {
+                return Err("option '" + name + "' does not take a value");
+            }
+            if (name == "-h" or name == "--help") {
+                help = true;
+            } else if (name == "-V" or name == "--version") {
+                version = true;
+            } else {
+                standalone = true;
             }
             continue;
         }
 
-        if (inline_value.is_some()) {
-            return Err(i"option '{$ name $}' does not take a value");
+        let takes_value = name == "-o" or name == "--output" or name == "-t" or name == "--template" or name == "--title";
+        if (!takes_value) {
+            return Err("unknown option '" + name + "'");
         }
-        if (name == "-h" or name == "--help") {
-            help = true;
-        } else if (name == "-V" or name == "--version") {
-            version = true;
-        } else if (name == "-v" or name == "--verbose") {
-            verbose = true;
-        } else if (name == "--shout") {
-            shout = true;
+        if (!has_value) {
+            if (i >= argv.len()) {
+                return Err("option '" + name + "' requires a value");
+            }
+            value = argv[i];
+            i += 1;
+        }
+        if (name == "-o" or name == "--output") {
+            output = value;
+        } else if (name == "--title") {
+            title = value;
+            title_given = true;
+            standalone = true;
         } else {
-            return Err(i"unknown option '{$ name $}'");
+            page_file = value;
+            standalone = true;
         }
     }
 
+    if (operands.len() > 1) {
+        return Err("extra operand '" + operands[1] + "'");
+    }
+    var input = "-";
+    if (operands.len() == 1) {
+        input = operands[0];
+    }
     return Ok(Options(
-        command = command,
-        operands = operands,
         help = help,
         version = version,
-        verbose = verbose,
-        shout = shout,
-        greeting = greeting,
+        input = input,
+        output = output,
+        standalone = standalone,
+        page_file = page_file,
+        title = title,
+        title_given = title_given,
     ));
 }

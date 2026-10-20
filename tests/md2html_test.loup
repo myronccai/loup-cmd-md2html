@@ -1,0 +1,25 @@
+@mode(host.dual)
+
+from debug.assert import (expect, expectEq);
+from cli.args import (parse_args);
+from commands.md2html import (page_title, fill_template, convert, DEFAULT_TEMPLATE);
+
+func test_fill_template(): void {
+    expectEq(fill_template("<t>{{title}}</t>{{body}}", "T", "<p>b</p>"), "<t>T</t><p>b</p>", "both");
+    expectEq(fill_template("{{body}}", "T", "{{title}}"), "{{title}}", "the body is not searched");
+}
+
+func test_page_title(): void {
+    let source = "# Heading & co\n";
+    expectEq(page_title(parse_args(["--title", "A<B"]).unwrap(), source), "A&lt;B", "--title is escaped");
+    expectEq(page_title(parse_args(["-s"]).unwrap(), source), "Heading &amp; co", "first heading");
+    expectEq(page_title(parse_args(["-s", "notes/todo.list.md"]).unwrap(), "text"), "todo", "file name");
+    expectEq(page_title(parse_args(["-s"]).unwrap(), "text"), "Untitled", "nothing else");
+}
+
+func test_convert(): void {
+    expectEq(convert(parse_args(["x.md"]).unwrap(), "*a*", DEFAULT_TEMPLATE), "<p><em>a</em></p>\n", "fragment");
+    let page = convert(parse_args(["-s"]).unwrap(), "# T\n", DEFAULT_TEMPLATE);
+    expect(page.startsWith("<!DOCTYPE html>\n<html>\n<head>\n<meta charset=\"utf-8\">\n<title>T</title>"), "page head");
+    expect(page.endsWith("<body>\n<h1>T</h1>\n</body>\n</html>\n"), "page body");
+}

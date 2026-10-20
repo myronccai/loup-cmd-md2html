@@ -25,12 +25,14 @@ jobs:
           loup --version
           clang --version
 
-      - name: Check, test and build
+      # Check, unit tests, native build, end-to-end tests, and the golden
+      # corpus through both `loup run` and the native binary.
+      - name: Check, test, build and compare lanes
         run: make ci
 
       - name: Upload binary
         uses: actions/upload-artifact@v4
         with:
-          name: myapp-linux-x86_64
-          path: build/myapp
+          name: md2html-linux-x86_64
+          path: build/md2html
           if-no-files-found: error

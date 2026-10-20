@@ -1,0 +1,36 @@
+@mode(host.dual)
+
+from debug.assert import (expect, expectEq);
+from markdown.text import (escape_html, indent_of, remove_columns, expand_leading_tabs, normalize_label, strip_tags, encode_url, is_punctuation, trim_end_spaces);
+
+func test_escape_html(): void {
+    expectEq(escape_html("a < b & \"c\" > d"), "a &lt; b &amp; &quot;c&quot; &gt; d", "all four");
+    expectEq(escape_html("plain 'text'"), "plain 'text'", "nothing to escape");
+}
+
+func test_indentation(): void {
+    expectEq(indent_of("   x"), 3, "spaces");
+    expectEq(indent_of("\tx"), 4, "tab");
+    expectEq(indent_of("  \tx"), 4, "tab to the next stop");
+    expectEq(expand_leading_tabs("\t\tx\ty"), "        x\ty", "only leading tabs");
+    expectEq(remove_columns("      x", 4), "  x", "spaces");
+    expectEq(remove_columns("\t\tx", 4), "\tx", "a whole tab");
+    expectEq(remove_columns("  \tx", 3), " x", "part of a tab becomes spaces");
+    expectEq(remove_columns(" x", 4), "x", "fewer than asked");
+}
+
+func test_labels(): void {
+    expectEq(normalize_label("  Foo   Bar\nBaz "), "foo bar baz", "case and whitespace");
+}
+
+func test_strip_tags(): void {
+    expectEq(strip_tags("a <em>b</em> &amp; c"), "a b &amp; c", "tags go, entities stay");
+    expectEq(strip_tags("x <img src=\"i\" alt=\"pic\" /> y"), "x pic y", "an image is its alt text");
+}
+
+func test_misc(): void {
+    expectEq(encode_url("a b|c"), "a%20b%7Cc", "encode");
+    expectEq(encode_url("/path?q=1&r=%20"), "/path?q=1&r=%20", "kept");
+    expect(is_punctuation("*") and is_punctuation("~") and !is_punctuation("a"), "punctuation");
+    expectEq(trim_end_spaces("x \t "), "x", "trim end");
+}

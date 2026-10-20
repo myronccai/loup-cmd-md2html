@@ -1,0 +1,44 @@
+<h1>md2html</h1>
+<p>Converts <strong>Markdown</strong> to HTML. It handles the parts of
+<a href="https://commonmark.org">CommonMark</a> that most README files use.</p>
+<h2>Install</h2>
+<ol>
+<li>
+<p>Install Loup:</p>
+<pre><code class="language-sh">curl -fsSL https://example.com/install.sh | sh
+</code></pre>
+</li>
+<li>
+<p>Build:</p>
+<pre><code class="language-sh">make build
+</code></pre>
+</li>
+</ol>
+<h2>Usage</h2>
+<table>
+<thead>
+<tr>
+<th>Option</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>-o FILE</code></td>
+<td>write to <em>FILE</em></td>
+</tr>
+<tr>
+<td><code>-s</code></td>
+<td>a whole page</td>
+</tr>
+</tbody>
+</table>
+<blockquote>
+<p><strong>Note:</strong> raw HTML such as &lt;script&gt; is escaped.</p>
+</blockquote>
+<ul>
+<li>Fast enough</li>
+<li>Small: about 2,000 lines of Loup</li>
+<li>Tested against a <a href="tests/fixtures/" title="The corpus">golden corpus</a></li>
+</ul>
+<hr />

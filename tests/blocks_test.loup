@@ -1,0 +1,77 @@
+@mode(host.dual)
+
+from debug.assert import (expect, expectEq);
+from markdown.blocks import (Block, Document, parse_document, split_row, find_ref);
+
+# A one-word name for each top-level block, joined by spaces.
+func kinds(source: string): string {
+    var names: list[string] = [];
+    for (block in parse_document(source).blocks) {
+        match block {
+            Block.Heading(level, text) => { names.push("h" + str(level)); },
+            Block.Paragraph(text) => { names.push("p"); },
+            Block.Code(info, text) => { names.push("code"); },
+            Block.Quote(children) => { names.push("quote"); },
+            Block.BulletList(tight, items) => {
+                if (tight) {
+                    names.push("ul");
+                } else {
+                    names.push("ul-loose");
+                }
+            },
+            Block.OrderedList(start, tight, items) => { names.push("ol" + str(start)); },
+            Block.Item(children) => { names.push("item"); },
+            Block.Rule => { names.push("hr"); },
+            Block.Table(aligns, header, cells) => { names.push("table" + str(aligns.len())); },
+        }
+    }
+    return names.join(" ");
+}
+
+func test_leaf_blocks(): void {
+    expectEq(kinds("# a\n\npara\n\n---\n\n    code\n"), "h1 p hr code", "leaf blocks");
+    expectEq(kinds("Title\n=====\nSub\n---"), "h1 h2", "setext headings");
+    expectEq(kinds("```\nx\n```\n~~~\ny\n~~~"), "code code", "fences");
+}
+
+func test_interruptions(): void {
+    expectEq(kinds("para\n# heading"), "p h1", "a heading ends a paragraph");
+    expectEq(kinds("para\n- item"), "p ul", "a bullet ends a paragraph");
+    expectEq(kinds("para\n2. two"), "p", "an ordered item not at 1 does not");
+    expectEq(kinds("para\n    not code"), "p", "indented text continues a paragraph");
+    expectEq(kinds("para\n| a |\n|---|"), "p table1", "a table ends a paragraph");
+}
+
+func test_lists(): void {
+    expectEq(kinds("- a\n- b\n* c"), "ul ul", "a new bullet starts a new list");
+    expectEq(kinds("- a\n\n- b"), "ul-loose", "a blank line between items");
+    expectEq(kinds("- a\n  - b\n\n  - c"), "ul", "a loose inner list leaves the outer one tight");
+    expectEq(kinds("3. a\n4. b"), "ol3", "start number");
+}
+
+func test_containers_nest(): void {
+    let doc = parse_document("> - a\n>   > b");
+    match doc.blocks[0] {
+        Block.Quote(children) => {
+            expectEq(children.len(), 1, "one list in the quote");
+        },
+        _ => {
+            expect(false, "a quote");
+        },
+    }
+}
+
+func test_reference_definitions(): void {
+    let doc = parse_document("[Foo Bar]: /url \"T\"\n[foo bar]: /second\n\ntext");
+    expectEq(doc.blocks.len(), 1, "definitions are not blocks");
+    let i = find_ref(doc.refs, "FOO  bar");
+    expect(i >= 0, "found case-insensitively");
+    expectEq(doc.refs.urls[i], "/url", "first definition wins");
+    expectEq(doc.refs.titles[i], "T", "title");
+}
+
+func test_split_row(): void {
+    expectEq(split_row("| a | b |").join(","), "a,b", "outer pipes");
+    expectEq(split_row("a|b").join(","), "a,b", "no outer pipes");
+    expectEq(split_row("| a \\| b | c |").join(","), "a | b,c", "escaped pipe");
+}

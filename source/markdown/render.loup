@@ -1,0 +1,185 @@
+@mode(host.dual)
+
+# Blocks to HTML, in the layout CommonMark implementations print: one block
+# per line, list items of tight lists without <p>.
+
+from markdown.text import (escape_html, strip_tags);
+from markdown.blocks import (Block, Refs, Document, parse_document);
+from markdown.inlines import (render_inline);
+
+func is_code(block: Block): bool {
+    match block {
+        Block.Code(info, text) => {
+            return true;
+        },
+        _ => {
+            return false;
+        },
+    }
+}
+
+func is_paragraph(block: Block): bool {
+    match block {
+        Block.Paragraph(text) => {
+            return true;
+        },
+        _ => {
+            return false;
+        },
+    }
+}
+
+func render_item(children: list[Block], tight: bool, refs: Refs): string {
+    var parts: list[string] = ["<li>"];
+    if (children.len() > 0 and !(tight and is_paragraph(children[0]))) {
+        parts.push("\n");
+    }
+    var i = 0;
+    while (i < children.len()) {
+        let child = children[i];
+        if (tight and is_paragraph(child)) {
+            match child {
+                Block.Paragraph(text) => {
+                    parts.push(render_inline(text, refs));
+                },
+                _ => {},
+            }
+            # A block after a hidden paragraph starts on a new line, except
+            # code, which markdown-it and cmark run on.
+            if (i + 1 < children.len() and !is_code(children[i + 1])) {
+                parts.push("\n");
+            }
+        } else {
+            parts.push(render_block(child, refs));
+        }
+        i += 1;
+    }
+    parts.push("</li>\n");
+    return parts.join("");
+}
+
+func render_items(items: list[Block], tight: bool, refs: Refs): string {
+    var parts: list[string] = [];
+    for (item in items) {
+        match item {
+            Block.Item(children) => {
+                parts.push(render_item(children, tight, refs));
+            },
+            _ => {
+                parts.push(render_block(item, refs));
+            },
+        }
+    }
+    return parts.join("");
+}
+
+func align_attr(align: string): string {
+    if (align.len() == 0) {
+        return "";
+    }
+    return " style=\"text-align:" + align + "\"";
+}
+
+func render_table(aligns: list[string], header: list[string], cells: list[string], refs: Refs): string {
+    var parts: list[string] = ["<table>\n<thead>\n<tr>\n"];
+    var c = 0;
+    while (c < aligns.len()) {
+        parts.push("<th" + align_attr(aligns[c]) + ">" + render_inline(header[c], refs) + "</th>\n");
+        c += 1;
+    }
+    parts.push("</tr>\n</thead>\n");
+    if (cells.len() > 0) {
+        parts.push("<tbody>\n");
+        var i = 0;
+        while (i < cells.len()) {
+            if (i % aligns.len() == 0) {
+                parts.push("<tr>\n");
+            }
+            let col = i % aligns.len();
+            parts.push("<td" + align_attr(aligns[col]) + ">" + render_inline(cells[i], refs) + "</td>\n");
+            if (col == aligns.len() - 1) {
+                parts.push("</tr>\n");
+            }
+            i += 1;
+        }
+        parts.push("</tbody>\n");
+    }
+    parts.push("</table>\n");
+    return parts.join("");
+}
+
+pub func render_block(block: Block, refs: Refs): string {
+    match block {
+        Block.Heading(level, text) => {
+            let tag = "h" + str(level);
+            return "<" + tag + ">" + render_inline(text, refs) + "</" + tag + ">\n";
+        },
+        Block.Paragraph(text) => {
+            return "<p>" + render_inline(text, refs) + "</p>\n";
+        },
+        Block.Code(info, text) => {
+            var attr = "";
+            let word = info.split(" ")[0];
+            if (word.len() > 0) {
+                attr = " class=\"language-" + escape_html(word) + "\"";
+            }
+            return "<pre><code" + attr + ">" + escape_html(text) + "</code></pre>\n";
+        },
+        Block.Quote(children) => {
+            return "<blockquote>\n" + render_blocks(children, refs) + "</blockquote>\n";
+        },
+        Block.BulletList(tight, items) => {
+            return "<ul>\n" + render_items(items, tight, refs) + "</ul>\n";
+        },
+        Block.OrderedList(start, tight, items) => {
+            var open = "<ol>\n";
+            if (start != 1) {
+                open = "<ol start=\"" + str(start) + "\">\n";
+            }
+            return open + render_items(items, tight, refs) + "</ol>\n";
+        },
+        Block.Item(children) => {
+            return render_item(children, false, refs);
+        },
+        Block.Rule => {
+            return "<hr />\n";
+        },
+        Block.Table(aligns, header, cells) => {
+            return render_table(aligns, header, cells, refs);
+        },
+    }
+}
+
+pub func render_blocks(blocks: list[Block], refs: Refs): string {
+    var parts: list[string] = [];
+    for (block in blocks) {
+        parts.push(render_block(block, refs));
+    }
+    return parts.join("");
+}
+
+# The whole conversion: Markdown text to an HTML fragment.
+pub func markdown_to_html(source: string): string {
+    let doc = parse_document(source);
+    return render_blocks(doc.blocks, doc.refs);
+}
+
+# The plain text of the first level-1 heading (or of the first heading of
+# any level), for a page title; "" when there is none.
+pub func first_heading(source: string): string {
+    let doc = parse_document(source);
+    var best = "";
+    var best_level = 7;
+    for (block in doc.blocks) {
+        match block {
+            Block.Heading(level, text) => {
+                if (level < best_level) {
+                    best_level = level;
+                    best = strip_tags(render_inline(text, doc.refs));
+                }
+            },
+            _ => {},
+        }
+    }
+    return best;
+}

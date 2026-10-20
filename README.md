@@ -1,12 +1,14 @@
-# template Loup commandline application
+# loup-cmd-md2html
 
-A GitHub template for a command-line application written in
-[Loup](https://code-craft.ai/references/loup). It includes argument parsing,
-command dispatch, a sample `hello` command, tests, a native build and a CI
-workflow.
+A Markdown to HTML converter in [Loup](https://code-craft.ai/references/loup):
+a documented subset of CommonMark plus tables, written as a fragment or a
+whole page, built as a two-pass parser (blocks, then inlines).
 
-After creating a repository from this template, work through
-[REPOSITORY_TODOS.md](REPOSITORY_TODOS.md).
+Part of the **loup-cmd** series of example applications: classic Linux and
+Windows commands, and projects for each Loup execution mode, each in its own
+repository under [myronccai](https://github.com/myronccai?tab=repositories&q=loup-cmd).
+This one is a `host.dual` project: the same source runs under `loup run`
+and as a native binary, and a golden-file corpus checks both.
 
 ## Requirements
 
@@ -14,70 +16,163 @@ After creating a repository from this template, work through
 
   ```sh
   curl -fsSL https://github.com/code-craft-ai-company/loup-releases/releases/latest/download/loup-install.sh | sh
-  loup --version
   ```
 
-- `make`
-- `clang` 17 or later for native builds. Native builds are supported on Linux
-  x86-64 and arm64, and are a preview on macOS and Windows.
+- `make`, and `clang` 17 or later for the native build.
 
 ## Usage
 
 ```sh
-make run ARGS="--help"            # run from source
-make run ARGS="hello Ann --shout"
-make check                        # type-check the program
-make test                         # run the tests in tests/
-make build                        # native binary: build/myapp
-make ci                           # check, test, build and smoke-test the binary
-make clean
+make build                    # native binary: build/md2html
+make ci                       # check, unit tests, build, e2e, parity
+make run ARGS="README.md"     # run from source with loup run
 ```
 
 ```text
-$ build/myapp --help
-usage: myapp [OPTIONS] COMMAND [ARGS...]
+$ cat notes.md
+# Release notes
 
-A command-line application written in Loup.
+Version **0.1** adds:
 
-Commands:
-  hello [NAME]          Print a greeting (NAME defaults to 'world')
-  help                  Show this help
+- tables, with `:---:` alignment
+- [reference links][spec]
 
-Options:
-  -g, --greeting TEXT   Greeting used by 'hello' (default: Hello)
-      --shout           Print the greeting in upper case
-  -v, --verbose         Print diagnostic messages to stderr
-  -h, --help            Show this help and exit
-  -V, --version         Show the version and exit
+| Lane | Command |
+|:-----|:--------|
+| interpreted | `loup run` |
+| native | `build/md2html` |
+
+[spec]: https://spec.commonmark.org
+$ build/md2html notes.md
+<h1>Release notes</h1>
+<p>Version <strong>0.1</strong> adds:</p>
+<ul>
+<li>tables, with <code>:---:</code> alignment</li>
+<li><a href="https://spec.commonmark.org">reference links</a></li>
+</ul>
+<table>
+<thead>
+<tr>
+<th style="text-align:left">Lane</th>
+<th style="text-align:left">Command</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align:left">interpreted</td>
+<td style="text-align:left"><code>loup run</code></td>
+</tr>
+<tr>
+<td style="text-align:left">native</td>
+<td style="text-align:left"><code>build/md2html</code></td>
+</tr>
+</tbody>
+</table>
+$ printf 'Hello *world* & <friends>\n' | build/md2html
+<p>Hello <em>world</em> &amp; &lt;friends&gt;</p>
+$ build/md2html -s --title 'My notes' notes.md | head -8
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>My notes</title>
+</head>
+<body>
+<h1>Release notes</h1>
+$ build/md2html missing.md; echo "exit $?"
+md2html: missing.md: No such file or directory
+exit 1
 ```
 
-Exit status: `0` success, `1` runtime failure, `2` usage error.
+`md2html [OPTION]... [FILE]` reads FILE, or standard input when FILE is
+missing or `-`, and writes the HTML to standard output.
+
+| Option | Meaning |
+|---|---|
+| `-o`, `--output FILE` | write the HTML to FILE |
+| `-s`, `--standalone` | write a whole page (doctype, `<head>` with a UTF-8 charset and a title, `<body>`) |
+| `-t`, `--template FILE` | write a page from FILE, replacing `{{title}}` and `{{body}}` (implies `-s`) |
+| `--title TEXT` | the page title (implies `-s`); by default the first heading, else the file name, else `Untitled` |
+| `-h`, `--help` / `-V`, `--version` | help and version |
+
+Exit status: `0` on success, `1` if a file cannot be read or written, `2`
+for a usage error.
+
+### Markdown supported
+
+| Blocks | Inlines |
+|---|---|
+| ATX (`#`) and setext (`===`, `---`) headings | `*em*`, `_em_`, `**strong**`, `__strong__`, with CommonMark's delimiter rules |
+| paragraphs, hard (two spaces, `\`) and soft line breaks | `` `code spans` `` |
+| fenced (```` ``` ````, `~~~`, with a language) and indented code | `[links](/url "title")`, `![images](/src)` |
+| block quotes, lazy continuation lines | reference links `[text][label]`, `[label][]`, `[label]` |
+| bullet and ordered lists, nested, tight or loose | autolinks `<https://...>`, `<me@example.com>` |
+| thematic breaks | backslash escapes, entities (`&copy;`, `&#35;`) |
+| tables with column alignment | |
+| link reference definitions | |
+
+Raw HTML is escaped rather than passed through, so the output is safe to
+embed in a page. Not supported: HTML blocks, multi-line reference
+definitions, footnotes, task lists, strikethrough, bare-URL autolinks and
+heading IDs.
+
+## What this example shows
+
+**One source, two lanes, one corpus.** The parser is `host.dual` Loup, so
+`loup run` interprets the same files that `make build` compiles.
+`tests/fixtures/` holds 13 Markdown files, one per feature plus a whole
+document, each with the HTML it must produce, and `make parity` (part of
+`make ci`) converts every one in both lanes and compares byte for byte:
+
+```text
+$ make parity
+bash tests/parity.sh "loup" build/md2html
+parity: 28 passed, 0 failed (2 lanes x 14 inputs)
+```
+
+The expected HTML follows cmark's and markdown-it's layout exactly. While
+developing, the output was compared with markdown-it-py 3.0.0 (CommonMark
+mode, tables on, raw HTML off) on the fixtures and on 300 other Markdown
+files, the Loup books and the READMEs of this series, with no
+differences. CI does not need markdown-it: the fixtures state the expected
+output.
+
+**A two-pass parser.** Pass 1 (`source/markdown/blocks.loup`) turns lines
+into a tree of `Block` enum values. Containers are parsed by collecting
+their lines, stripping the `>` or the list item's indentation, and parsing
+the result recursively; reference definitions are gathered on the way.
+Pass 2 (`source/markdown/inlines.loup`) runs on each leaf block's text: one
+scan into pieces (escaped text, code spans, `*`/`_` delimiter runs with
+their flanking flags, brackets), links resolved when a `]` finds its
+bracket, then CommonMark's delimiter-stack algorithm pairs the emphasis.
+Pass 1 must finish first because a link may use a definition that comes
+later.
+
+**What native builds of Loup 1.26.0 required:** each struct is constructed
+in one module only (a struct built in two modules is corrupted), every
+`match` that builds a string returns from its arms, files are checked
+before they are read or written (native `IoError`s cannot be caught), and
+`xs.slice(i).index_of(x)` is written as a loop (no native lowering).
 
 ## Layout
 
 ```text
-package.lppkg            # Loup manifest
-Makefile                 # run, check, test, build, ci, clean
-source/                  # the application's Loup code
-├── main.loup            # entry point
-├── cli/                 # argument parsing, help text, command dispatch
-└── commands/            # one module per command
-tests/                   # *_test.loup files
-specs/                   # feature specs: requirements, design, tasks
-skills/loup-programmer/  # agent skill for writing Loup
+source/main.loup               # entry point
+source/appinfo.loup            # name, version, exit statuses
+source/cli/args.loup           # options
+source/cli/usage.loup          # --help and --version text
+source/cli/app.loup            # run(): parse, convert, exit status
+source/commands/md2html.loup   # input, pages and templates, output
+source/markdown/text.loup      # escaping, character classes, tab columns
+source/markdown/blocks.loup    # pass 1: blocks and reference definitions
+source/markdown/inlines.loup   # pass 2: emphasis, code, links, images
+source/markdown/render.loup    # blocks to HTML
+tests/*_test.loup              # unit tests (make test)
+tests/e2e.sh                   # end-to-end tests of build/md2html (make e2e)
+tests/parity.sh                # the corpus through both lanes (make parity)
+tests/fixtures/                # golden corpus: *.md and expected *.html
+specs/md2html/                 # requirements, design, tasks
 ```
 
-[AGENTS.md](AGENTS.md) has the full layout, every build and test command, and
-the steps for adding a command.
-
-## Notes on the toolchain
-
-- On Linux x86-64, `loup` is the self-hosted driver and `loup-bootstrap` is
-  Stage0. `check` and `test` use `loup-bootstrap`; on other platforms both
-  names run the same tool. The Makefile handles this.
-- Modules import each other by their path under `source/`
-  (`from cli.args import (Options);`). Tests import them the same way, which
-  is why `make test` puts `source/` on `LOUPPATH`.
-- The Wasm build (`loup-bootstrap build`) is experimental: modules that use
-  `i"..."` interpolation build but trap at run time, so this template builds
-  native binaries.
+[AGENTS.md](AGENTS.md) has every build and test command and the conventions
+for changing the code.

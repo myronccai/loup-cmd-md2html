@@ -1,0 +1,32 @@
+@mode(host.dual)
+
+from debug.assert import (expectEq);
+from markdown.render import (markdown_to_html, first_heading);
+
+func test_paragraph_and_heading(): void {
+    expectEq(markdown_to_html("# Hi\n\ntext\n"), "<h1>Hi</h1>\n<p>text</p>\n", "two blocks");
+    expectEq(markdown_to_html(""), "", "empty document");
+}
+
+func test_tight_and_loose_lists(): void {
+    expectEq(markdown_to_html("- a\n- b\n"), "<ul>\n<li>a</li>\n<li>b</li>\n</ul>\n", "tight");
+    expectEq(markdown_to_html("- a\n\n- b\n"), "<ul>\n<li>\n<p>a</p>\n</li>\n<li>\n<p>b</p>\n</li>\n</ul>\n", "loose");
+    expectEq(markdown_to_html("- a\n  - b\n"), "<ul>\n<li>a\n<ul>\n<li>b</li>\n</ul>\n</li>\n</ul>\n", "nested");
+    expectEq(markdown_to_html("2. x\n"), "<ol start=\"2\">\n<li>x</li>\n</ol>\n", "start");
+}
+
+func test_code_and_quote(): void {
+    expectEq(markdown_to_html("```js\na<b\n```\n"), "<pre><code class=\"language-js\">a&lt;b\n</code></pre>\n", "fence");
+    expectEq(markdown_to_html("> q\n"), "<blockquote>\n<p>q</p>\n</blockquote>\n", "quote");
+}
+
+func test_table(): void {
+    let want = "<table>\n<thead>\n<tr>\n<th style=\"text-align:right\">a</th>\n</tr>\n</thead>\n<tbody>\n<tr>\n<td style=\"text-align:right\">1</td>\n</tr>\n</tbody>\n</table>\n";
+    expectEq(markdown_to_html("| a |\n|--:|\n| 1 |\n"), want, "aligned table");
+}
+
+func test_first_heading(): void {
+    expectEq(first_heading("## Sub\n# Main *title*\n# Later"), "Main title", "first level-1 heading");
+    expectEq(first_heading("### Only\n"), "Only", "any level");
+    expectEq(first_heading("text"), "", "none");
+}

@@ -1,0 +1,22 @@
+# Tasks: md2html
+
+- [x] 1. Parse options; read a file or standard input; write standard output or `-o`
+  - _Requirements: 1.1, 1.2, 1.3, 1.4, 5.1, 5.2, 5.3_
+- [x] 2. Pass 1: leaf blocks (headings, paragraphs, code, rules)
+  - _Requirements: 2.1, 2.2, 2.3, 2.6_
+- [x] 3. Pass 1: containers (block quotes, lists with tight/loose), tabs
+  - _Requirements: 2.4, 2.5_
+- [x] 4. Pass 1: tables and link reference definitions
+  - _Requirements: 2.7, 2.8_
+- [x] 5. Pass 2: code spans, escapes, entities, breaks, autolinks
+  - _Requirements: 3.2, 3.4, 3.5, 3.6, 3.7_
+- [x] 6. Pass 2: emphasis with the delimiter stack
+  - _Requirements: 3.1_
+- [x] 7. Pass 2: inline and reference links and images
+  - _Requirements: 3.3_
+- [x] 8. HTML rendering in the cmark layout
+  - _Requirements: 2.1–2.7_
+- [x] 9. Pages: built-in template, `--template`, titles
+  - _Requirements: 4.1, 4.2, 4.3_
+- [x] 10. Golden corpus and `make parity` across `loup run` and the native binary; unit and end-to-end tests
+  - _Requirements: 6.1, 6.2, all_

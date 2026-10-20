@@ -1,0 +1,52 @@
+@mode(host.dual)
+
+from debug.assert import (expectEq);
+from markdown.blocks import (new_refs, parse_document);
+from markdown.inlines import (render_inline);
+
+func html(text: string): string {
+    return render_inline(text, new_refs());
+}
+
+func test_emphasis(): void {
+    expectEq(html("*a* _b_ **c** __d__"), "<em>a</em> <em>b</em> <strong>c</strong> <strong>d</strong>", "basic");
+    expectEq(html("***x***"), "<em><strong>x</strong></em>", "both");
+    expectEq(html("**a*"), "*<em>a</em>", "leftover opener");
+    expectEq(html("snake_case_name"), "snake_case_name", "intraword underscore");
+    expectEq(html("in*word*s"), "in<em>word</em>s", "intraword star");
+    expectEq(html("a * b * c"), "a * b * c", "spaced stars");
+    expectEq(html("*foo**bar**baz*"), "<em>foo<strong>bar</strong>baz</em>", "rule of 3");
+}
+
+func test_code_spans(): void {
+    expectEq(html("`a < b`"), "<code>a &lt; b</code>", "escaped");
+    expectEq(html("`` a`b ``"), "<code>a`b</code>", "double backticks");
+    expectEq(html("`*no em*`"), "<code>*no em*</code>", "no emphasis inside");
+    expectEq(html("`open"), "`open", "unclosed");
+}
+
+func test_links_and_images(): void {
+    expectEq(html("[a](/u \"t\")"), "<a href=\"/u\" title=\"t\">a</a>", "link with title");
+    expectEq(html("![*a*](i.png)"), "<img src=\"i.png\" alt=\"a\" />", "image alt is plain text");
+    expectEq(html("[a [b](/in)](/out)"), "[a <a href=\"/in\">b</a>](/out)", "no link in a link");
+    expectEq(html("[x](<a b>)"), "<a href=\"a%20b\">x</a>", "angle destination");
+    expectEq(html("<http://e.com/?a&b>"), "<a href=\"http://e.com/?a&amp;b\">http://e.com/?a&amp;b</a>", "autolink");
+    expectEq(html("[no](link"), "[no](link", "unclosed");
+}
+
+func test_reference_links(): void {
+    let doc = parse_document("[r]: /url\n");
+    expectEq(render_inline("[r] [R][] [t][r] [x]", doc.refs), "<a href=\"/url\">r</a> <a href=\"/url\">R</a> <a href=\"/url\">t</a> [x]", "shortcut, collapsed, full");
+}
+
+func test_escapes_and_entities(): void {
+    expectEq(html("\\*x\\* \\a"), "*x* \\a", "escapes");
+    expectEq(html("&amp; &copy; &#65; &bogus; &"), "&amp; © A &amp;bogus; &amp;", "entities");
+    expectEq(html("<b>"), "&lt;b&gt;", "raw HTML is escaped");
+}
+
+func test_line_breaks(): void {
+    expectEq(html("a  \nb"), "a<br />\nb", "two spaces");
+    expectEq(html("a\\\nb"), "a<br />\nb", "backslash");
+    expectEq(html("a \n  b"), "a\nb", "soft break");
+}

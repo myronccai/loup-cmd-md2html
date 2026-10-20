@@ -1,0 +1,630 @@
+@mode(host.dual)
+
+# Pass 2: the inline text of one block to HTML.
+#
+# The text is scanned once into pieces: finished HTML, runs of * and _
+# (delimiters), and [ / ![ brackets. A ] looks back for its bracket and,
+# if a link destination or reference follows, turns everything since the
+# bracket into one link or image. Emphasis is then matched with the
+# delimiter-stack algorithm of the CommonMark spec, first inside each link
+# text and finally over the whole text.
+
+from markdown.text import (chars_of, escape_html, encode_url, is_punctuation, is_space, is_letter, is_digit, strip_tags);
+from markdown.blocks import (Refs, find_ref);
+
+const TEXT: int = 0;
+const DELIM: int = 1;
+const BRACKET: int = 2;
+
+struct Piece {
+    pub var kind: int;
+    # TEXT: finished HTML; BRACKET: "[" or "![".
+    pub var text: string;
+    # DELIM: the character and how many of it are left unmatched.
+    pub var ch: string;
+    pub var count: int;
+    pub var orig: int;
+    pub var can_open: bool;
+    pub var can_close: bool;
+    pub var open_tags: string;
+    pub var close_tags: string;
+    # BRACKET: still able to start a link; where its text starts.
+    pub var active: bool;
+    pub var src: int;
+}
+
+struct Scanner {
+    pub chars: list[string];
+    pub var pos: int;
+    pub var pieces: list[Piece];
+    # Plain text not yet flushed into a TEXT piece.
+    pub var buffer: list[string];
+    # Indices of open brackets, innermost last.
+    pub var brackets: list[int];
+}
+
+# A link destination and title parsed after ](.
+struct Target {
+    pub ok: bool;
+    pub url: string;
+    pub title: string;
+    pub end: int;
+}
+
+func make_piece(kind: int, text: string, ch: string, count: int, can_open: bool, can_close: bool, src: int): Piece {
+    return Piece(kind = kind, text = text, ch = ch, count = count, orig = count, can_open = can_open, can_close = can_close, open_tags = "", close_tags = "", active = true, src = src);
+}
+
+func no_target(): Target {
+    return Target(ok = false, url = "", title = "", end = 0);
+}
+
+func make_target(url: string, title: string, end: int): Target {
+    return Target(ok = true, url = url, title = title, end = end);
+}
+
+func at(s: Scanner, i: int): string {
+    if (i < 0 or i >= s.chars.len()) {
+        return "";
+    }
+    return s.chars[i];
+}
+
+func flush(edits s: Scanner): void {
+    if (s.buffer.len() > 0) {
+        s.pieces.push(make_piece(TEXT, escape_html(s.buffer.join("")), "", 0, false, false, 0));
+        s.buffer = [];
+    }
+}
+
+func emit(edits s: Scanner, html: string): void {
+    flush(edits: s);
+    s.pieces.push(make_piece(TEXT, html, "", 0, false, false, 0));
+}
+
+# Removes trailing spaces from the unflushed text; returns how many.
+func drop_trailing_spaces(edits s: Scanner): int {
+    var n = 0;
+    while (s.buffer.len() > 0 and s.buffer[s.buffer.len() - 1] == " ") {
+        s.buffer.pop();
+        n += 1;
+    }
+    return n;
+}
+
+func skip_spaces(edits s: Scanner): void {
+    while (at(s, s.pos) == " " or at(s, s.pos) == "\t") {
+        s.pos += 1;
+    }
+}
+
+# ---------------------------------------------------------------- code spans
+
+func code_span(edits s: Scanner): void {
+    var k = 0;
+    while (at(s, s.pos + k) == "`") {
+        k += 1;
+    }
+    # Look for a closing run of exactly k backticks.
+    var q = s.pos + k;
+    let n = s.chars.len();
+    while (q < n) {
+        if (s.chars[q] != "`") {
+            q += 1;
+            continue;
+        }
+        var run = 0;
+        while (at(s, q + run) == "`") {
+            run += 1;
+        }
+        if (run == k) {
+            var content = s.chars.slice(s.pos + k, q).join("").replace("\n", " ");
+            if (content.len() >= 2 and content.startsWith(" ") and content.endsWith(" ") and content.trim().len() > 0) {
+                content = content.slice(1, content.len() - 1);
+            }
+            emit(edits: s, "<code>" + escape_html(content) + "</code>");
+            s.pos = q + k;
+            return;
+        }
+        q += run;
+    }
+    s.buffer.push("`".repeat(k));
+    s.pos += k;
+}
+
+# ---------------------------------------------------------------- emphasis
+
+func delimiter_run(edits s: Scanner): void {
+    let ch = s.chars[s.pos];
+    var k = 0;
+    while (at(s, s.pos + k) == ch) {
+        k += 1;
+    }
+    let before = at(s, s.pos - 1);
+    let after = at(s, s.pos + k);
+    let left = !is_space(after) and (!is_punctuation(after) or is_space(before) or is_punctuation(before));
+    let right = !is_space(before) and (!is_punctuation(before) or is_space(after) or is_punctuation(after));
+    var can_open = left;
+    var can_close = right;
+    if (ch == "_") {
+        can_open = left and (!right or is_punctuation(before));
+        can_close = right and (!left or is_punctuation(after));
+    }
+    flush(edits: s);
+    s.pieces.push(make_piece(DELIM, "", ch, k, can_open, can_close, 0));
+    s.pos += k;
+}
+
+# Matches emphasis among pieces[start..end) (CommonMark's "process
+# emphasis"): each closer looks back for the nearest compatible opener.
+func process_emphasis(edits pieces: list[Piece], start: int, end: int): void {
+    var c = start;
+    while (c < end) {
+        var closer = pieces[c];
+        if (closer.kind != DELIM or !closer.can_close or closer.count == 0) {
+            c += 1;
+            continue;
+        }
+        var found = -1;
+        var o = c - 1;
+        while (o >= start) {
+            let opener = pieces[o];
+            if (opener.kind == DELIM and opener.ch == closer.ch and opener.can_open and opener.count > 0) {
+                # The rule of 3.
+                let both = opener.can_close or closer.can_open;
+                let sum3 = (opener.orig + closer.orig) % 3 == 0;
+                let each3 = opener.orig % 3 == 0 and closer.orig % 3 == 0;
+                if (!(both and sum3 and !each3)) {
+                    found = o;
+                    break;
+                }
+            }
+            o -= 1;
+        }
+        if (found < 0) {
+            c += 1;
+            continue;
+        }
+        var opener = pieces[found];
+        var used = 1;
+        var tag = "em";
+        if (opener.count >= 2 and closer.count >= 2) {
+            used = 2;
+            tag = "strong";
+        }
+        opener.count -= used;
+        opener.open_tags = "<" + tag + ">" + opener.open_tags;
+        closer.count -= used;
+        closer.close_tags = closer.close_tags + "</" + tag + ">";
+        pieces[found] = opener;
+        pieces[c] = closer;
+        # Delimiters between the two can no longer match.
+        var k = found + 1;
+        while (k < c) {
+            var between = pieces[k];
+            if (between.kind == DELIM) {
+                between.can_open = false;
+                between.can_close = false;
+                pieces[k] = between;
+            }
+            k += 1;
+        }
+        if (closer.count == 0) {
+            c += 1;
+        }
+    }
+}
+
+func render_pieces(pieces: list[Piece], start: int, end: int): string {
+    var parts: list[string] = [];
+    var i = start;
+    while (i < end) {
+        let p = pieces[i];
+        if (p.kind == DELIM) {
+            parts.push(p.close_tags + p.ch.repeat(p.count) + p.open_tags);
+        } else {
+            parts.push(p.text);
+        }
+        i += 1;
+    }
+    return parts.join("");
+}
+
+# ---------------------------------------------------------------- links
+
+# Backslash escapes in a destination or title.
+func unescape(text: string): string {
+    if (text.index_of("\\") < 0) {
+        return text;
+    }
+    let chars = chars_of(text);
+    var parts: list[string] = [];
+    var i = 0;
+    while (i < chars.len()) {
+        if (chars[i] == "\\" and i + 1 < chars.len() and is_punctuation(chars[i + 1])) {
+            parts.push(chars[i + 1]);
+            i += 2;
+        } else {
+            parts.push(chars[i]);
+            i += 1;
+        }
+    }
+    return parts.join("");
+}
+
+func skip_ws(s: Scanner, i: int): int {
+    var j = i;
+    var newlines = 0;
+    while (at(s, j) == " " or at(s, j) == "\t" or at(s, j) == "\n") {
+        if (at(s, j) == "\n") {
+            newlines += 1;
+        }
+        j += 1;
+    }
+    if (newlines > 1) {
+        return -1;
+    }
+    return j;
+}
+
+# Parses `(destination "title")` starting at `open` (the "(").
+func inline_target(s: Scanner, open: int): Target {
+    var i = skip_ws(s, open + 1);
+    if (i < 0) {
+        return no_target();
+    }
+    var url = "";
+    if (at(s, i) == "<") {
+        var j = i + 1;
+        while (at(s, j) != ">") {
+            if (at(s, j) == "" or at(s, j) == "\n" or at(s, j) == "<") {
+                return no_target();
+            }
+            if (at(s, j) == "\\") {
+                j += 1;
+            }
+            j += 1;
+        }
+        url = s.chars.slice(i + 1, j).join("");
+        i = j + 1;
+    } else {
+        var depth = 0;
+        var j = i;
+        while (at(s, j) != "" and !is_space(at(s, j))) {
+            let ch = at(s, j);
+            if (ch == "\\" and is_punctuation(at(s, j + 1))) {
+                j += 2;
+                continue;
+            }
+            if (ch == "(") {
+                depth += 1;
+            } else if (ch == ")") {
+                if (depth == 0) {
+                    break;
+                }
+                depth -= 1;
+            }
+            j += 1;
+        }
+        if (depth != 0) {
+            return no_target();
+        }
+        url = s.chars.slice(i, j).join("");
+        i = j;
+    }
+    let after_url = i;
+    i = skip_ws(s, i);
+    if (i < 0) {
+        return no_target();
+    }
+    var title = "";
+    let q = at(s, i);
+    if ((q == "\"" or q == "'" or q == "(") and i > after_url) {
+        var close = q;
+        if (q == "(") {
+            close = ")";
+        }
+        var j = i + 1;
+        while (at(s, j) != close) {
+            if (at(s, j) == "") {
+                return no_target();
+            }
+            if (at(s, j) == "\\") {
+                j += 1;
+            }
+            j += 1;
+        }
+        title = s.chars.slice(i + 1, j).join("");
+        i = skip_ws(s, j + 1);
+        if (i < 0) {
+            return no_target();
+        }
+    }
+    if (at(s, i) != ")") {
+        return no_target();
+    }
+    return make_target(unescape(url), unescape(title), i + 1);
+}
+
+# The reference after `]` at `close`: [label], [] or nothing (shortcut).
+func reference_target(s: Scanner, close: int, inner: string, refs: Refs): Target {
+    var label = inner;
+    var end = close + 1;
+    if (at(s, close + 1) == "[") {
+        var j = close + 2;
+        while (at(s, j) != "]" and at(s, j) != "" and at(s, j) != "[") {
+            j += 1;
+        }
+        if (at(s, j) == "]") {
+            let given = s.chars.slice(close + 2, j).join("");
+            if (given.trim().len() > 0) {
+                label = given;
+            }
+            end = j + 1;
+        }
+    }
+    let r = find_ref(refs, label);
+    if (r < 0) {
+        return no_target();
+    }
+    return make_target(refs.urls[r], refs.titles[r], end);
+}
+
+func title_attr(title: string): string {
+    if (title.len() == 0) {
+        return "";
+    }
+    return " title=\"" + escape_html(title) + "\"";
+}
+
+func close_bracket(edits s: Scanner, refs: Refs): void {
+    flush(edits: s);
+    if (s.brackets.len() == 0) {
+        s.buffer.push("]");
+        s.pos += 1;
+        return;
+    }
+    let b = s.brackets[s.brackets.len() - 1];
+    let opener = s.pieces[b];
+    if (!opener.active) {
+        s.brackets.pop();
+        s.buffer.push("]");
+        s.pos += 1;
+        return;
+    }
+    let inner_source = s.chars.slice(opener.src, s.pos).join("");
+    var target = no_target();
+    if (at(s, s.pos + 1) == "(") {
+        target = inline_target(s, s.pos + 1);
+    }
+    if (!target.ok) {
+        target = reference_target(s, s.pos, inner_source, refs);
+    }
+    if (!target.ok) {
+        s.brackets.pop();
+        s.buffer.push("]");
+        s.pos += 1;
+        return;
+    }
+    let end = s.pieces.len();
+    var pieces = s.pieces;
+    process_emphasis(edits: pieces, b + 1, end);
+    let inner = render_pieces(pieces, b + 1, end);
+    let href = escape_html(encode_url(target.url));
+    var html = "";
+    let image = opener.text == "![";
+    if (image) {
+        html = "<img src=\"" + href + "\" alt=\"" + strip_tags(inner) + "\"" + title_attr(target.title) + " />";
+    } else {
+        html = "<a href=\"" + href + "\"" + title_attr(target.title) + ">" + inner + "</a>";
+    }
+    var kept: list[Piece] = [];
+    var i = 0;
+    while (i < b) {
+        kept.push(s.pieces[i]);
+        i += 1;
+    }
+    s.pieces = kept;
+    s.brackets.pop();
+    if (!image) {
+        # No links inside links: earlier [ brackets become plain text.
+        for (k in s.brackets) {
+            var p = s.pieces[k];
+            if (p.text == "[") {
+                p.active = false;
+                s.pieces[k] = p;
+            }
+        }
+    }
+    emit(edits: s, html);
+    s.pos = target.end;
+}
+
+# ---------------------------------------------------------------- the rest
+
+# <scheme:...> or <user@host> at s.pos; "" when it is not an autolink.
+func autolink(s: Scanner): string {
+    var j = s.pos + 1;
+    while (at(s, j) != ">") {
+        let ch = at(s, j);
+        if (ch == "" or ch == "<" or is_space(ch)) {
+            return "";
+        }
+        j += 1;
+    }
+    let body = s.chars.slice(s.pos + 1, j).join("");
+    let colon = body.index_of(":");
+    if (colon >= 2 and colon <= 32 and is_letter(body.slice(0, 1))) {
+        var scheme_ok = true;
+        for (ch in body.slice(0, colon)) {
+            if (!is_letter(ch) and !is_digit(ch) and ch != "+" and ch != "." and ch != "-") {
+                scheme_ok = false;
+            }
+        }
+        if (scheme_ok) {
+            return "<a href=\"" + escape_html(encode_url(body)) + "\">" + escape_html(body) + "</a>";
+        }
+    }
+    let at_sign = body.index_of("@");
+    if (at_sign > 0 and body.slice(at_sign).index_of(".") > 1 and !body.endsWith(".") and body.index_of("\\") < 0) {
+        return "<a href=\"mailto:" + escape_html(body) + "\">" + escape_html(body) + "</a>";
+    }
+    return "";
+}
+
+# The length of an entity reference at s.pos (&name; &#123; &#x1F;), or 0.
+func entity_length(s: Scanner): int {
+    var j = s.pos + 1;
+    if (at(s, j) == "#") {
+        j += 1;
+        var hex = false;
+        if (at(s, j) == "x" or at(s, j) == "X") {
+            hex = true;
+            j += 1;
+        }
+        let digits_start = j;
+        while (is_digit(at(s, j)) or (hex and "abcdefABCDEF".index_of(at(s, j)) >= 0 and at(s, j).len() == 1)) {
+            j += 1;
+        }
+        let count = j - digits_start;
+        if (count == 0 or count > 7 or at(s, j) != ";") {
+            return 0;
+        }
+        return j + 1 - s.pos;
+    }
+    let name_start = j;
+    while (is_letter(at(s, j)) or is_digit(at(s, j))) {
+        j += 1;
+    }
+    if (j == name_start or !is_letter(at(s, name_start)) or j - name_start > 31 or at(s, j) != ";") {
+        return 0;
+    }
+    return j + 1 - s.pos;
+}
+
+func entity_names(): list[string] {
+    return ["amp", "lt", "gt", "quot", "apos", "nbsp", "copy", "reg", "trade", "hellip", "mdash", "ndash", "lsquo", "rsquo", "ldquo", "rdquo", "laquo", "raquo", "deg", "plusmn", "times", "divide", "middot", "bull", "euro", "pound", "yen", "cent", "sect", "para", "larr", "rarr", "uarr", "darr", "harr", "le", "ge", "ne", "infin"];
+}
+
+func entity_codes(): list[int] {
+    return [38, 60, 62, 34, 39, 160, 169, 174, 8482, 8230, 8212, 8211, 8216, 8217, 8220, 8221, 171, 187, 176, 177, 215, 247, 183, 8226, 8364, 163, 165, 162, 167, 182, 8592, 8594, 8593, 8595, 8596, 8804, 8805, 8800, 8734];
+}
+
+func hex_value(text: string): int {
+    var value = 0;
+    for (ch in text.toLowerCase()) {
+        value = value * 16 + "0123456789abcdef".index_of(ch);
+    }
+    return value;
+}
+
+# The character an entity reference (&name;, &#123;, &#x7B;) stands for, or
+# "" for a name this converter does not know (it is then printed as text).
+func decode_entity(entity: string): string {
+    if (entity.len() < 3) {
+        return "";
+    }
+    let body = entity.slice(1, entity.len() - 1);
+    var code = -1;
+    if (body.startsWith("#x") or body.startsWith("#X")) {
+        code = hex_value(body.slice(2));
+    } else if (body.startsWith("#")) {
+        code = body.slice(1).toInt();
+    } else {
+        let names = entity_names();
+        var i = 0;
+        while (i < names.len() and names[i] != body) {
+            i += 1;
+        }
+        if (i == names.len()) {
+            return "";
+        }
+        code = entity_codes()[i];
+    }
+    if (code == 0 or code > 0x10FFFF or (code >= 0xD800 and code <= 0xDFFF)) {
+        code = 0xFFFD;
+    }
+    return str(char.of(code));
+}
+
+pub func render_inline(text: string, refs: Refs): string {
+    var none: list[Piece] = [];
+    var buffer: list[string] = [];
+    var brackets: list[int] = [];
+    var s = Scanner(chars = chars_of(text), pos = 0, pieces = none, buffer = buffer, brackets = brackets);
+    let n = s.chars.len();
+    while (s.pos < n) {
+        let ch = s.chars[s.pos];
+        if (ch == "\\") {
+            let next = at(s, s.pos + 1);
+            if (next == "\n") {
+                drop_trailing_spaces(edits: s);
+                emit(edits: s, "<br />\n");
+                s.pos += 2;
+                skip_spaces(edits: s);
+            } else if (is_punctuation(next)) {
+                s.buffer.push(next);
+                s.pos += 2;
+            } else {
+                s.buffer.push("\\");
+                s.pos += 1;
+            }
+        } else if (ch == "\n") {
+            let spaces = drop_trailing_spaces(edits: s);
+            if (spaces >= 2) {
+                emit(edits: s, "<br />\n");
+            } else {
+                s.buffer.push("\n");
+            }
+            s.pos += 1;
+            skip_spaces(edits: s);
+        } else if (ch == "`") {
+            flush(edits: s);
+            code_span(edits: s);
+        } else if (ch == "*" or ch == "_") {
+            delimiter_run(edits: s);
+        } else if (ch == "!" and at(s, s.pos + 1) == "[") {
+            flush(edits: s);
+            s.brackets.push(s.pieces.len());
+            s.pieces.push(make_piece(BRACKET, "![", "", 0, false, false, s.pos + 2));
+            s.pos += 2;
+        } else if (ch == "[") {
+            flush(edits: s);
+            s.brackets.push(s.pieces.len());
+            s.pieces.push(make_piece(BRACKET, "[", "", 0, false, false, s.pos + 1));
+            s.pos += 1;
+        } else if (ch == "]") {
+            close_bracket(edits: s, refs);
+        } else if (ch == "<") {
+            let link = autolink(s);
+            if (link.len() > 0) {
+                emit(edits: s, link);
+                while (s.chars[s.pos] != ">") {
+                    s.pos += 1;
+                }
+                s.pos += 1;
+            } else {
+                s.buffer.push("<");
+                s.pos += 1;
+            }
+        } else if (ch == "&") {
+            let length = entity_length(s);
+            let decoded = decode_entity(s.chars.slice(s.pos, s.pos + length).join(""));
+            if (length > 0 and decoded.len() > 0) {
+                s.buffer.push(decoded);
+                s.pos += length;
+            } else {
+                s.buffer.push("&");
+                s.pos += 1;
+            }
+        } else {
+            s.buffer.push(ch);
+            s.pos += 1;
+        }
+    }
+    flush(edits: s);
+    var pieces = s.pieces;
+    let total = pieces.len();
+    process_emphasis(edits: pieces, 0, total);
+    return render_pieces(pieces, 0, total);
+}

@@ -1,0 +1,674 @@
+@mode(host.dual)
+
+# Pass 1: lines to a tree of blocks.
+#
+# Containers (block quotes and list items) are handled by collecting their
+# lines, stripping the container's marker or indentation, and parsing the
+# result recursively. Leaf blocks keep their raw inline text for pass 2.
+# Link reference definitions are collected here, so pass 2 can resolve
+# [text][label] anywhere in the document.
+
+from markdown.text import (chars_of, indent_of, expand_leading_tabs, strip_indent, remove_columns, is_blank, is_digit, trim_end_spaces, trim_start_spaces, normalize_label);
+
+pub enum Block {
+    Heading(level: int, text: string),
+    Paragraph(text: string),
+    Code(info: string, text: string),
+    Quote(children: list[Block]),
+    BulletList(tight: bool, items: list[Block]),
+    OrderedList(start: int, tight: bool, items: list[Block]),
+    Item(children: list[Block]),
+    Rule,
+    # cells holds the body row by row, `aligns.len()` cells per row.
+    Table(aligns: list[string], header: list[string], cells: list[string]),
+}
+
+# Link reference definitions: label (normalised), destination, title.
+pub struct Refs {
+    pub var labels: list[string];
+    pub var urls: list[string];
+    pub var titles: list[string];
+}
+
+# The blocks of some lines, and whether a blank line separated two of them
+# (which makes the list item holding them loose).
+pub struct Blocks {
+    pub blocks: list[Block];
+    pub gap: bool;
+}
+
+pub struct Document {
+    pub blocks: list[Block];
+    pub refs: Refs;
+}
+
+struct ListResult {
+    pub block: Block;
+    pub next: int;
+}
+
+# A list marker at the start of a line (after up to 3 spaces of indent).
+struct Marker {
+    pub found: bool;
+    pub ordered: bool;
+    # The bullet character, or the delimiter of an ordered marker.
+    pub symbol: string;
+    pub number: int;
+    pub width: int;
+}
+
+pub func new_refs(): Refs {
+    let none: list[string] = [];
+    return Refs(labels = none, urls = none, titles = none);
+}
+
+pub func find_ref(refs: Refs, label: string): int {
+    return refs.labels.index_of(normalize_label(label));
+}
+
+# ---------------------------------------------------------------- lines
+
+# The line with its indent (up to 3 spaces) removed.
+func content_of(line: string): string {
+    return strip_indent(expand_leading_tabs(line), 3);
+}
+
+# 1 to 6 for an ATX heading line, else 0.
+func atx_level(s: string): int {
+    var level = 0;
+    while (level < s.len() and s.slice(level, level + 1) == "#") {
+        level += 1;
+    }
+    if (level == 0 or level > 6) {
+        return 0;
+    }
+    if (level == s.len()) {
+        return level;
+    }
+    let next = s.slice(level, level + 1);
+    if (next == " " or next == "\t") {
+        return level;
+    }
+    return 0;
+}
+
+func atx_text(s: string, level: int): string {
+    var text = s.slice(level).trim();
+    # An optional closing sequence of #s, preceded by a space.
+    var end = text.len();
+    while (end > 0 and text.slice(end - 1, end) == "#") {
+        end -= 1;
+    }
+    if (end == 0) {
+        return "";
+    }
+    if (end < text.len() and (text.slice(end - 1, end) == " " or text.slice(end - 1, end) == "\t")) {
+        return text.slice(0, end).trim();
+    }
+    return text;
+}
+
+# The fence (``` or ~~~, three or more) a line opens, or "".
+func fence_of(s: string): string {
+    if (!s.startsWith("```") and !s.startsWith("~~~")) {
+        return "";
+    }
+    let ch = s.slice(0, 1);
+    var n = 0;
+    while (n < s.len() and s.slice(n, n + 1) == ch) {
+        n += 1;
+    }
+    if (ch == "`" and s.slice(n).index_of("`") >= 0) {
+        return "";
+    }
+    return s.slice(0, n);
+}
+
+func closes_fence(s: string, fence: string): bool {
+    let ch = fence.slice(0, 1);
+    var n = 0;
+    while (n < s.len() and s.slice(n, n + 1) == ch) {
+        n += 1;
+    }
+    return n >= fence.len() and is_blank(s.slice(n));
+}
+
+# A thematic break: three or more of the same -, * or _, spaces allowed.
+func is_rule(s: string): bool {
+    if (s.len() == 0) {
+        return false;
+    }
+    let ch = s.slice(0, 1);
+    if (ch != "-" and ch != "*" and ch != "_") {
+        return false;
+    }
+    var count = 0;
+    for (c in s) {
+        if (c == ch) {
+            count += 1;
+        } else if (c != " " and c != "\t") {
+            return false;
+        }
+    }
+    return count >= 3;
+}
+
+# 1 for a === underline, 2 for ---, else 0.
+func setext_level(s: string): int {
+    let t = s.trim();
+    if (t.len() == 0) {
+        return 0;
+    }
+    let ch = t.slice(0, 1);
+    if (ch != "=" and ch != "-") {
+        return 0;
+    }
+    for (c in t) {
+        if (c != ch) {
+            return 0;
+        }
+    }
+    if (ch == "=") {
+        return 1;
+    }
+    return 2;
+}
+
+func no_marker(): Marker {
+    return Marker(found = false, ordered = false, symbol = "", number = 0, width = 0);
+}
+
+func marker_of(s: string): Marker {
+    if (s.len() == 0) {
+        return no_marker();
+    }
+    let first = s.slice(0, 1);
+    var width = 0;
+    var ordered = false;
+    var number = 0;
+    var symbol = "";
+    if (first == "-" or first == "+" or first == "*") {
+        width = 1;
+        symbol = first;
+    } else {
+        var n = 0;
+        while (n < s.len() and n < 10 and is_digit(s.slice(n, n + 1))) {
+            number = number * 10 + "0123456789".index_of(s.slice(n, n + 1));
+            n += 1;
+        }
+        if (n == 0 or n > 9 or n >= s.len()) {
+            return no_marker();
+        }
+        let delim = s.slice(n, n + 1);
+        if (delim != "." and delim != ")") {
+            return no_marker();
+        }
+        width = n + 1;
+        ordered = true;
+        symbol = delim;
+    }
+    if (width < s.len()) {
+        let after = s.slice(width, width + 1);
+        if (after != " " and after != "\t") {
+            return no_marker();
+        }
+    }
+    return Marker(found = true, ordered = ordered, symbol = symbol, number = number, width = width);
+}
+
+func same_list(a: Marker, b: Marker): bool {
+    return a.found and b.found and a.ordered == b.ordered and a.symbol == b.symbol;
+}
+
+# Whether a line (indent already removed) ends a paragraph: a heading, a
+# fence, a quote, a rule, or a list item that is not empty (an ordered one
+# only when it starts at 1).
+func interrupts_paragraph(s: string): bool {
+    if (atx_level(s) > 0 or fence_of(s).len() > 0 or s.startsWith(">") or is_rule(s)) {
+        return true;
+    }
+    let m = marker_of(s);
+    if (m.found and !is_blank(s.slice(m.width))) {
+        return !m.ordered or m.number == 1;
+    }
+    return false;
+}
+
+# ---------------------------------------------------------------- tables
+
+# The cells of a table row: outer pipes dropped, split at unescaped pipes,
+# trimmed. An escaped \| becomes a plain | (even inside a code span, as in
+# GitHub's tables).
+pub func split_row(line: string): list[string] {
+    var t = line.trim();
+    if (t.startsWith("|")) {
+        t = t.slice(1);
+    }
+    if (t.endsWith("|") and !t.endsWith("\\|")) {
+        t = t.slice(0, t.len() - 1);
+    }
+    var cells: list[string] = [];
+    var current: list[string] = [];
+    var escaped = false;
+    for (ch in t) {
+        if (ch == "|" and !escaped) {
+            cells.push(current.join("").trim());
+            current = [];
+        } else if (ch == "|") {
+            current.pop();
+            current.push(ch);
+        } else {
+            current.push(ch);
+        }
+        escaped = ch == "\\" and !escaped;
+    }
+    cells.push(current.join("").trim());
+    return cells;
+}
+
+func delimiter_align(cell: string): string {
+    if (cell.len() == 0) {
+        return "?";
+    }
+    var body = cell;
+    let left = body.startsWith(":");
+    if (left) {
+        body = body.slice(1);
+    }
+    let right = body.endsWith(":");
+    if (right) {
+        body = body.slice(0, body.len() - 1);
+    }
+    if (body.len() == 0) {
+        return "?";
+    }
+    for (ch in body) {
+        if (ch != "-") {
+            return "?";
+        }
+    }
+    if (left and right) {
+        return "center";
+    }
+    if (left) {
+        return "left";
+    }
+    if (right) {
+        return "right";
+    }
+    return "";
+}
+
+# The column alignments if lines[i] and lines[i + 1] start a table (a header
+# row and a matching delimiter row), else an empty list.
+func table_aligns(lines: list[string], i: int): list[string] {
+    var aligns: list[string] = [];
+    if (i + 1 >= lines.len()) {
+        return aligns;
+    }
+    let header = lines[i];
+    let delim = lines[i + 1];
+    if (indent_of(header) >= 4 or indent_of(delim) >= 4 or header.index_of("|") < 0) {
+        return aligns;
+    }
+    let d = delim.trim();
+    if (d.index_of("-") < 0 or (d.index_of("|") < 0 and d.index_of(":") < 0 and split_row(header).len() != 1)) {
+        return aligns;
+    }
+    let cells = split_row(delim);
+    if (cells.len() != split_row(header).len()) {
+        return aligns;
+    }
+    for (cell in cells) {
+        let a = delimiter_align(cell);
+        if (a == "?") {
+            var none: list[string] = [];
+            return none;
+        }
+        aligns.push(a);
+    }
+    return aligns;
+}
+
+# ---------------------------------------------------------------- references
+
+# Parses `[label]: destination "title"` (on one line); returns false when
+# the line is not a definition.
+func add_definition(line: string, edits refs: Refs): bool {
+    let s = line.trim();
+    if (!s.startsWith("[")) {
+        return false;
+    }
+    let close = s.index_of("]:");
+    if (close < 2) {
+        return false;
+    }
+    let label = s.slice(1, close);
+    if (label.index_of("[") >= 0 or label.index_of("]") >= 0 or normalize_label(label).len() == 0) {
+        return false;
+    }
+    var rest = trim_start_spaces(s.slice(close + 2));
+    if (rest.len() == 0) {
+        return false;
+    }
+    var url = "";
+    if (rest.startsWith("<")) {
+        let end = rest.index_of(">");
+        if (end < 0) {
+            return false;
+        }
+        url = rest.slice(1, end);
+        rest = rest.slice(end + 1);
+    } else {
+        var n = 0;
+        while (n < rest.len() and rest.slice(n, n + 1) != " " and rest.slice(n, n + 1) != "\t") {
+            n += 1;
+        }
+        url = rest.slice(0, n);
+        rest = rest.slice(n);
+    }
+    let after = rest.trim();
+    var title = "";
+    if (after.len() > 0) {
+        let q = after.slice(0, 1);
+        let last = after.slice(after.len() - 1);
+        let pair = (q == "\"" and last == "\"") or (q == "'" and last == "'") or (q == "(" and last == ")");
+        if (after.len() < 2 or !pair or (rest.len() > 0 and rest.slice(0, 1) != " " and rest.slice(0, 1) != "\t")) {
+            return false;
+        }
+        title = after.slice(1, after.len() - 1);
+    }
+    let key = normalize_label(label);
+    if (!refs.labels.contains(key)) {
+        refs.labels.push(key);
+        refs.urls.push(url);
+        refs.titles.push(title);
+    }
+    return true;
+}
+
+# ---------------------------------------------------------------- blocks
+
+func make_blocks(blocks: list[Block], gap: bool): Blocks {
+    return Blocks(blocks = blocks, gap = gap);
+}
+
+func make_list_result(block: Block, next: int): ListResult {
+    return ListResult(block = block, next = next);
+}
+
+func parse_list(lines: list[string], start: int, edits refs: Refs): ListResult {
+    let first = marker_of(content_of(lines[start]));
+    var items: list[Block] = [];
+    var tight = true;
+    var i = start;
+    let n = lines.len();
+    while (i < n) {
+        let line = lines[i];
+        let indent = indent_of(line);
+        let s = content_of(line);
+        let m = marker_of(s);
+        if (indent >= 4 or !same_list(first, m)) {
+            break;
+        }
+        let after = s.slice(m.width);
+        var offset = indent + m.width + 1;
+        var item_lines: list[string] = [];
+        if (is_blank(after)) {
+            item_lines.push("");
+        } else {
+            let spaces = indent_of(after);
+            let expanded = expand_leading_tabs(after);
+            if (spaces >= 5) {
+                offset = indent + m.width + 1;
+                item_lines.push(expanded.slice(1));
+            } else {
+                offset = indent + m.width + spaces;
+                item_lines.push(expanded.slice(spaces));
+            }
+        }
+        var j = i + 1;
+        while (j < n) {
+            let l = lines[j];
+            if (is_blank(l)) {
+                # An item that starts with a blank line ends at the next one.
+                if (item_lines.len() == 1 and is_blank(item_lines[0])) {
+                    break;
+                }
+                item_lines.push("");
+                j += 1;
+                continue;
+            }
+            if (indent_of(l) >= offset) {
+                item_lines.push(remove_columns(l, offset));
+                j += 1;
+                continue;
+            }
+            # The next item of this list.
+            if (same_list(first, marker_of(content_of(l)))) {
+                break;
+            }
+            # A lazy continuation line of a paragraph.
+            let prev = item_lines[item_lines.len() - 1];
+            if (!is_blank(prev) and !interrupts_paragraph(content_of(l)) and table_aligns(lines, j).len() == 0) {
+                item_lines.push(trim_start_spaces(l));
+                j += 1;
+                continue;
+            }
+            break;
+        }
+        var trailing = 0;
+        while (item_lines.len() > 1 and is_blank(item_lines[item_lines.len() - 1])) {
+            item_lines.pop();
+            trailing += 1;
+        }
+        let child = parse_blocks(item_lines, edits: refs);
+        if (child.gap) {
+            tight = false;
+        }
+        items.push(Block.Item(children = child.blocks));
+        i = j;
+        if (trailing > 0) {
+            if (i < n and indent_of(lines[i]) < 4 and same_list(first, marker_of(content_of(lines[i])))) {
+                tight = false;
+            } else {
+                # The blank lines belong to whatever follows the list.
+                i = j - trailing;
+                break;
+            }
+        }
+    }
+    if (first.ordered) {
+        return make_list_result(Block.OrderedList(start = first.number, tight = tight, items = items), i);
+    }
+    return make_list_result(Block.BulletList(tight = tight, items = items), i);
+}
+
+pub func parse_blocks(lines: list[string], edits refs: Refs): Blocks {
+    var blocks: list[Block] = [];
+    var gap = false;
+    var pending_blank = false;
+    let n = lines.len();
+    var i = 0;
+    while (i < n) {
+        let raw = lines[i];
+        if (is_blank(raw)) {
+            if (blocks.len() > 0) {
+                pending_blank = true;
+            }
+            i += 1;
+            continue;
+        }
+        let before = blocks.len();
+        let indent = indent_of(raw);
+
+        if (indent >= 4) {
+            # Indented code: up to the next line that is neither blank nor
+            # indented by four, without trailing blank lines.
+            var j = i;
+            while (j < n and (is_blank(lines[j]) or indent_of(lines[j]) >= 4)) {
+                j += 1;
+            }
+            var end = j;
+            while (end > i and is_blank(lines[end - 1])) {
+                end -= 1;
+            }
+            var code: list[string] = [];
+            var k = i;
+            while (k < end) {
+                code.push(remove_columns(lines[k], 4) + "\n");
+                k += 1;
+            }
+            blocks.push(Block.Code(info = "", text = code.join("")));
+            i = end;
+        } else {
+            let s = content_of(raw);
+            let level = atx_level(s);
+            let fence = fence_of(s);
+            let aligns = table_aligns(lines, i);
+            if (level > 0) {
+                blocks.push(Block.Heading(level = level, text = atx_text(s, level)));
+                i += 1;
+            } else if (fence.len() > 0) {
+                let info = s.slice(fence.len()).trim();
+                var code: list[string] = [];
+                var j = i + 1;
+                while (j < n and !(indent_of(lines[j]) < 4 and closes_fence(content_of(lines[j]), fence))) {
+                    code.push(remove_columns(lines[j], indent) + "\n");
+                    j += 1;
+                }
+                blocks.push(Block.Code(info = info, text = code.join("")));
+                i = j + 1;
+            } else if (is_rule(s)) {
+                blocks.push(Block.Rule);
+                i += 1;
+            } else if (s.startsWith(">")) {
+                var quoted: list[string] = [];
+                var j = i;
+                while (j < n and !is_blank(lines[j])) {
+                    let l = lines[j];
+                    let t = content_of(l);
+                    if (indent_of(l) < 4 and t.startsWith(">")) {
+                        var rest = t.slice(1);
+                        if (rest.startsWith(" ")) {
+                            rest = rest.slice(1);
+                        }
+                        quoted.push(rest);
+                    } else if (quoted.len() > 0 and !is_blank(quoted[quoted.len() - 1]) and !interrupts_paragraph(t)) {
+                        quoted.push(trim_start_spaces(l));
+                    } else {
+                        break;
+                    }
+                    j += 1;
+                }
+                let inner = parse_blocks(quoted, edits: refs);
+                blocks.push(Block.Quote(children = inner.blocks));
+                i = j;
+            } else if (marker_of(s).found) {
+                let result = parse_list(lines, i, edits: refs);
+                blocks.push(result.block);
+                i = result.next;
+            } else if (aligns.len() > 0) {
+                let header = split_row(lines[i]);
+                var cells: list[string] = [];
+                var j = i + 2;
+                while (j < n and !is_blank(lines[j]) and !interrupts_paragraph(content_of(lines[j]))) {
+                    let row = split_row(lines[j]);
+                    var c = 0;
+                    while (c < aligns.len()) {
+                        if (c < row.len()) {
+                            cells.push(row[c]);
+                        } else {
+                            cells.push("");
+                        }
+                        c += 1;
+                    }
+                    j += 1;
+                }
+                blocks.push(Block.Table(aligns = aligns, header = header, cells = cells));
+                i = j;
+            } else {
+                i = parse_paragraph(lines, i, edits: blocks, edits: refs);
+            }
+        }
+
+        if (blocks.len() > before) {
+            if (pending_blank and before > 0) {
+                gap = true;
+            }
+            pending_blank = false;
+        }
+    }
+    return make_blocks(blocks, gap);
+}
+
+# A paragraph (or a setext heading, or link reference definitions) starting
+# at lines[i]; appends it and returns the index after it.
+func parse_paragraph(lines: list[string], i: int, edits blocks: list[Block], edits refs: Refs): int {
+    let n = lines.len();
+    var para: list[string] = [trim_start_spaces(lines[i])];
+    var j = i + 1;
+    var heading = 0;
+    while (j < n) {
+        let l = lines[j];
+        if (is_blank(l)) {
+            break;
+        }
+        if (indent_of(l) < 4) {
+            let t = content_of(l);
+            let level = setext_level(t);
+            if (level > 0) {
+                heading = level;
+                j += 1;
+                break;
+            }
+            if (interrupts_paragraph(t) or table_aligns(lines, j).len() > 0) {
+                break;
+            }
+        }
+        para.push(trim_start_spaces(l));
+        j += 1;
+    }
+    # Link reference definitions at the start of the paragraph.
+    var first = 0;
+    while (first < para.len() and add_definition(para[first], edits: refs)) {
+        first += 1;
+    }
+    if (first == para.len()) {
+        if (heading > 0) {
+            # The underline alone: a --- is a rule, === is text.
+            if (heading == 2) {
+                blocks.push(Block.Rule);
+            } else {
+                blocks.push(Block.Paragraph(text = content_of(lines[j - 1]).trim()));
+            }
+        }
+        return j;
+    }
+    let text = trim_end_spaces(para.slice(first).join("\n"));
+    if (heading > 0) {
+        blocks.push(Block.Heading(level = heading, text = text.trim()));
+    } else {
+        blocks.push(Block.Paragraph(text = text));
+    }
+    return j;
+}
+
+# Splits a document into lines and parses it.
+pub func parse_document(source: string): Document {
+    var lines: list[string] = [];
+    for (line in source.split("\n")) {
+        if (line.endsWith("\r")) {
+            lines.push(line.slice(0, line.len() - 1));
+        } else {
+            lines.push(line);
+        }
+    }
+    # A final newline ends the last line; it does not start another one.
+    if (lines.len() > 0 and lines[lines.len() - 1].len() == 0) {
+        lines.pop();
+    }
+    var refs = new_refs();
+    let parsed = parse_blocks(lines, edits: refs);
+    return Document(blocks = parsed.blocks, refs = refs);
+}
