@@ -1,11 +1,15 @@
 @mode(host.dual)
 
-# Command-line parsing for md2html:
+# md2html: command-line parsing into Options, for the grammar
 #
 #   md2html [OPTION]... [FILE]
 #
+# Runtime: host.dual. Compiled into the native binary build/md2html by `make
+# build`; `loup run source/main.loup` interprets the same code.
+#
 # Options may appear anywhere before `--`. Value options accept `-x VALUE`,
 # `--name VALUE` and `--name=VALUE`. FILE `-` (or none) is standard input.
+# --title and -t imply -s.
 
 pub struct Options {
     pub help: bool;

@@ -1,5 +1,13 @@
 @mode(host.dual)
 
+# md2html: the command line from start to finish: parse the arguments,
+# answer --help and --version, convert, and map failures to exit statuses
+# (2 for a usage error, 1 for an exception).
+#
+# Runtime: host.dual. Compiled into the native binary build/md2html by `make
+# build`; `loup run source/main.loup` interprets the same code. Unit tests
+# call run() directly with an argument list.
+
 from appinfo import (APP_NAME, EXIT_OK, EXIT_FAILURE, EXIT_USAGE);
 from cli.args import (parse_args);
 from cli.usage import (usage, version_line);

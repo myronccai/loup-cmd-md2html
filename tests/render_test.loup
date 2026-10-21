@@ -1,5 +1,12 @@
 @mode(host.dual)
 
+# Unit tests for the HTML renderer (markdown.render): block layout, tight
+# and loose lists, code and quotes, tables, and the first heading.
+#
+# Runtime: host.dual, run by the test runner: `make test` interprets this
+# file with Stage0 (`loup-bootstrap test --no-parallel`, source/ on
+# LOUPPATH), one test per `func test_*()`. It is not part of the binary.
+
 from debug.assert import (expectEq);
 from markdown.render import (markdown_to_html, first_heading);
 

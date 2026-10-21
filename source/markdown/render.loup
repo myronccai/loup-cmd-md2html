@@ -1,7 +1,18 @@
 @mode(host.dual)
 
-# Blocks to HTML, in the layout CommonMark implementations print: one block
-# per line, list items of tight lists without <p>.
+# md2html renderer: the block tree to HTML, in the layout CommonMark
+# implementations print: one block per line, list items of tight lists
+# without <p>. Each block's inline text goes through pass 2
+# (markdown.inlines) as the block is printed.
+#
+# Runtime: host.dual. Compiled into the native binary build/md2html by `make
+# build`; `loup run source/main.loup` interprets the same code, and `make
+# parity` requires the same HTML from both lanes for tests/fixtures/*.md.
+#
+# Structure: block-kind tests; list items, where a tight list hides its
+# paragraphs' <p>; tables; render_block with one arm per Block kind; then
+# the entry points markdown_to_html (the whole conversion: pass 1, then
+# rendering) and first_heading (for the page title).
 
 from markdown.text import (escape_html, strip_tags);
 from markdown.blocks import (Block, Refs, Document, parse_document);
@@ -108,6 +119,9 @@ func render_table(aligns: list[string], header: list[string], cells: list[string
     return parts.join("");
 }
 
+# Every arm returns from a block (statement form) instead of the match
+# being an expression: in native builds of Loup 1.26.0 a match expression
+# whose arms build new strings returns freed memory.
 pub func render_block(block: Block, refs: Refs): string {
     match block {
         Block.Heading(level, text) => {
@@ -164,8 +178,9 @@ pub func markdown_to_html(source: string): string {
     return render_blocks(doc.blocks, doc.refs);
 }
 
-# The plain text of the first level-1 heading (or of the first heading of
-# any level), for a page title; "" when there is none.
+# The plain text of the first heading of the highest level present (the
+# first h1, else the first h2, and so on), for a page title; "" when there
+# is none.
 pub func first_heading(source: string): string {
     let doc = parse_document(source);
     var best = "";

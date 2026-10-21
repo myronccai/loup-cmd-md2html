@@ -2,6 +2,12 @@
 
 # md2html: read the input, convert it, optionally wrap it in a page, and
 # write it out.
+#
+# Runtime: host.dual. Compiled into the native binary build/md2html by `make
+# build`; `loup run source/main.loup` interprets the same code, and `make
+# parity` requires the same HTML from both lanes for tests/fixtures/*.md.
+# Everything but run_md2html is a pure function returning text, so the unit
+# tests check output without capturing stdout.
 
 from appinfo import (APP_NAME, EXIT_OK, EXIT_FAILURE);
 from cli.args import (Options);
@@ -54,7 +60,10 @@ pub func convert(opts: Options, source: string, layout: string): string {
     return fill_template(layout, page_title(opts, source), body);
 }
 
-# Why a file cannot be read ("" when it can).
+# Why a file cannot be read ("" when it can). Checked before reading: the
+# IoError that readText throws cannot be caught in a native build or under
+# the self-hosted `loup run` (the program would stop with the runtime's own
+# message), so the usual causes get md2html's message and status 1 here.
 func read_problem(path: string): string {
     if (!exists(path)) {
         return path + ": No such file or directory";
@@ -93,6 +102,8 @@ pub func run_md2html(opts: Options): int {
         print(html);
         return EXIT_OK;
     }
+    # The same for -o: a failed writeText cannot be caught either, so the
+    # output's directory is checked first.
     var dir = dirname(opts.output);
     if (dir.len() == 0) {
         dir = ".";

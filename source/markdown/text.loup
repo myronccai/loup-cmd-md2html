@@ -1,6 +1,15 @@
 @mode(host.dual)
 
-# Character classes and small string helpers shared by both passes.
+# md2html: character classes and small string helpers shared by both
+# passes (markdown.blocks and markdown.inlines).
+#
+# Runtime: host.dual. Compiled into the native binary build/md2html by `make
+# build`; `loup run source/main.loup` interprets the same code, and `make
+# parity` requires the same HTML from both lanes for tests/fixtures/*.md.
+#
+# A character is a one-character string, as iterating a string yields them.
+# Indentation follows CommonMark: a tab advances to the next multiple of 4
+# columns, and only leading tabs are ever expanded.
 
 const PUNCTUATION: string = "!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~";
 const DIGITS: string = "0123456789";

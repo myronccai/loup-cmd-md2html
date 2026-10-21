@@ -1,13 +1,19 @@
 @mode(host.dual)
 
-# Pass 2: the inline text of one block to HTML.
+# md2html pass 2 (inlines): the inline text of one block to HTML.
 #
-# The text is scanned once into pieces: finished HTML, runs of * and _
-# (delimiters), and [ / ![ brackets. A ] looks back for its bracket and,
-# if a link destination or reference follows, turns everything since the
-# bracket into one link or image. Emphasis is then matched with the
-# delimiter-stack algorithm of the CommonMark spec, first inside each link
-# text and finally over the whole text.
+# Runtime: host.dual. Compiled into the native binary build/md2html by `make
+# build`; `loup run source/main.loup` interprets the same code, and `make
+# parity` requires the same HTML from both lanes for tests/fixtures/*.md.
+#
+# Structure: the text is scanned once (render_inline, at the end) into
+# pieces: finished HTML, runs of * and _ (delimiters), and [ / ![ brackets.
+# A ] looks back for its bracket and, if a link destination or reference
+# follows, turns everything since the bracket into one link or image.
+# Emphasis is then matched with the delimiter-stack algorithm of the
+# CommonMark spec, first inside each link text and finally over the whole
+# text. The sections below come in that order: the scanner and its pieces,
+# code spans, emphasis, links, then autolinks, entities and the main loop.
 
 from markdown.text import (chars_of, escape_html, encode_url, is_punctuation, is_space, is_letter, is_digit, strip_tags);
 from markdown.blocks import (Refs, find_ref);
@@ -16,6 +22,10 @@ const TEXT: int = 0;
 const DELIM: int = 1;
 const BRACKET: int = 2;
 
+# One piece of the scanned text. A delimiter run keeps its character and
+# the count still unmatched, which print as text, and collects the <em> and
+# <strong> tags its matches open or close; `orig` is the run's length
+# before matching, which the rule of 3 needs.
 struct Piece {
     pub var kind: int;
     # TEXT: finished HTML; BRACKET: "[" or "![".
@@ -33,6 +43,8 @@ struct Piece {
     pub var src: int;
 }
 
+# The scan state. Plain text gathers in `buffer` and is HTML-escaped into
+# one TEXT piece (flush) before any other piece is added.
 struct Scanner {
     pub chars: list[string];
     pub var pos: int;
@@ -134,6 +146,9 @@ func code_span(edits s: Scanner): void {
 
 # ---------------------------------------------------------------- emphasis
 
+# A run of * or _. Whether it can open or close emphasis follows
+# CommonMark's left- and right-flanking rules, which look at the characters
+# on either side; `_` is stricter, so that snake_case stays plain text.
 func delimiter_run(edits s: Scanner): void {
     let ch = s.chars[s.pos];
     var k = 0;
@@ -185,6 +200,10 @@ func process_emphasis(edits pieces: list[Piece], start: int, end: int): void {
             c += 1;
             continue;
         }
+        # Two delimiters from each side make <strong>, else one makes <em>.
+        # Tags go outside earlier matches (prepended to the opener, appended
+        # to the closer), so nested emphasis closes in the right order. A
+        # closer with delimiters left over looks for another opener.
         var opener = pieces[found];
         var used = 1;
         var tag = "em";
@@ -252,6 +271,8 @@ func unescape(text: string): string {
     return parts.join("");
 }
 
+# The index after spaces, tabs and at most one line ending from i, or -1
+# when a blank line is in the way (a link cannot span one).
 func skip_ws(s: Scanner, i: int): int {
     var j = i;
     var newlines = 0;
@@ -267,7 +288,9 @@ func skip_ws(s: Scanner, i: int): int {
     return j;
 }
 
-# Parses `(destination "title")` starting at `open` (the "(").
+# Parses `(destination "title")` starting at `open` (the "("). A
+# destination in <...> may hold spaces; a bare one ends at whitespace and
+# may hold balanced parentheses. A title needs whitespace before it.
 func inline_target(s: Scanner, open: int): Target {
     var i = skip_ws(s, open + 1);
     if (i < 0) {
@@ -377,6 +400,11 @@ func title_attr(title: string): string {
     return " title=\"" + escape_html(title) + "\"";
 }
 
+# A ] closes the innermost open bracket. When an inline target or a
+# reference follows, the pieces since the bracket get their emphasis
+# matched on their own and collapse into one <a> or <img> piece; otherwise
+# the ] is plain text and the bracket is forgotten. The link text's source
+# (inner_source) is the label of a [] or shortcut reference.
 func close_bracket(edits s: Scanner, refs: Refs): void {
     flush(edits: s);
     if (s.brackets.len() == 0) {
@@ -502,6 +530,8 @@ func entity_length(s: Scanner): int {
     return j + 1 - s.pos;
 }
 
+# The named entities this converter decodes (a common subset of HTML's
+# list), with their code points at the same index in entity_codes.
 func entity_names(): list[string] {
     return ["amp", "lt", "gt", "quot", "apos", "nbsp", "copy", "reg", "trade", "hellip", "mdash", "ndash", "lsquo", "rsquo", "ldquo", "rdquo", "laquo", "raquo", "deg", "plusmn", "times", "divide", "middot", "bull", "euro", "pound", "yen", "cent", "sect", "para", "larr", "rarr", "uarr", "darr", "harr", "le", "ge", "ne", "infin"];
 }
@@ -547,6 +577,11 @@ func decode_entity(entity: string): string {
     return str(char.of(code));
 }
 
+# The scanner's main loop: each step handles the construct that starts at
+# the current character (escape, line ending, code span, delimiter run,
+# bracket, autolink, entity), and any other character joins the plain text.
+# A line ending after two or more spaces, or after a backslash, is a hard
+# break. Emphasis over the whole text comes last.
 pub func render_inline(text: string, refs: Refs): string {
     var none: list[Piece] = [];
     var buffer: list[string] = [];

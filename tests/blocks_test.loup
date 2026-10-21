@@ -1,5 +1,13 @@
 @mode(host.dual)
 
+# Unit tests for pass 1 (markdown.blocks): the blocks a document parses
+# into, paragraph interruptions, lists, nested containers, link reference
+# definitions and table row splitting.
+#
+# Runtime: host.dual, run by the test runner: `make test` interprets this
+# file with Stage0 (`loup-bootstrap test --no-parallel`, source/ on
+# LOUPPATH), one test per `func test_*()`. It is not part of the binary.
+
 from debug.assert import (expect, expectEq);
 from markdown.blocks import (Block, Document, parse_document, split_row, find_ref);
 

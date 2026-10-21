@@ -1,5 +1,12 @@
 @mode(host.dual)
 
+# Unit tests for pass 2 (markdown.inlines): emphasis, code spans, links and
+# images, reference links, escapes and entities, and line breaks.
+#
+# Runtime: host.dual, run by the test runner: `make test` interprets this
+# file with Stage0 (`loup-bootstrap test --no-parallel`, source/ on
+# LOUPPATH), one test per `func test_*()`. It is not part of the binary.
+
 from debug.assert import (expectEq);
 from markdown.blocks import (new_refs, parse_document);
 from markdown.inlines import (render_inline);

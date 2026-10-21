@@ -1,6 +1,18 @@
 @mode(host.dual)
 
-# Pass 1: lines to a tree of blocks.
+# md2html pass 1 (blocks): the lines of a Markdown document to a tree of
+# blocks, plus its link reference definitions.
+#
+# Runtime: host.dual. Compiled into the native binary build/md2html by `make
+# build`; `loup run source/main.loup` interprets the same code, and `make
+# parity` requires the same HTML from both lanes for tests/fixtures/*.md.
+#
+# Structure: the data types; line classifiers (indent, ATX and setext
+# headings, fences, thematic breaks, list markers, and what interrupts a
+# paragraph); table detection; link reference definitions; then the parser
+# proper: parse_blocks, with parse_list and parse_paragraph for the blocks
+# that need look-ahead, and parse_document, which splits the source into
+# lines and starts it.
 #
 # Containers (block quotes and list items) are handled by collecting their
 # lines, stripping the container's marker or indentation, and parsing the
@@ -397,6 +409,13 @@ func make_list_result(block: Block, next: int): ListResult {
     return ListResult(block = block, next = next);
 }
 
+# A list starting at lines[start]: consecutive items whose markers are of
+# the same kind (the same bullet, or ordered with the same delimiter). An
+# item's content column is the marker plus the spaces after it (just one
+# when there are five or more: the rest then make indented code); later
+# lines indented that far belong to the item with that indent removed, and
+# the item's lines are parsed recursively. The list is loose when a blank
+# line separates two items or two blocks inside an item.
 func parse_list(lines: list[string], start: int, edits refs: Refs): ListResult {
     let first = marker_of(content_of(lines[start]));
     var items: list[Block] = [];
@@ -484,6 +503,12 @@ func parse_list(lines: list[string], start: int, edits refs: Refs): ListResult {
     return make_list_result(Block.BulletList(tight = tight, items = items), i);
 }
 
+# Parses a run of lines (the document, or a container's content with its
+# markers stripped) in one pass. Each step looks at the first line of the
+# next block, decides its kind in CommonMark's order of precedence,
+# consumes all of its lines and moves i past them. `gap` records a blank
+# line between two blocks of this run (not before the first or after the
+# last), which is what makes a list item loose.
 pub func parse_blocks(lines: list[string], edits refs: Refs): Blocks {
     var blocks: list[Block] = [];
     var gap = false;
@@ -540,9 +565,13 @@ pub func parse_blocks(lines: list[string], edits refs: Refs): Blocks {
                 blocks.push(Block.Code(info = info, text = code.join("")));
                 i = j + 1;
             } else if (is_rule(s)) {
+                # Before the list test, so that `* * *` is a rule.
                 blocks.push(Block.Rule);
                 i += 1;
             } else if (s.startsWith(">")) {
+                # The quote's `>` lines, with the marker and one space
+                # removed, plus lazy lines that continue a paragraph, up to
+                # a blank line.
                 var quoted: list[string] = [];
                 var j = i;
                 while (j < n and !is_blank(lines[j])) {
@@ -569,6 +598,9 @@ pub func parse_blocks(lines: list[string], edits refs: Refs): Blocks {
                 blocks.push(result.block);
                 i = result.next;
             } else if (aligns.len() > 0) {
+                # Body rows run to a blank line or the start of another
+                # block. Each row is padded or cut to the header's column
+                # count, so cells holds aligns.len() cells per row.
                 let header = split_row(lines[i]);
                 var cells: list[string] = [];
                 var j = i + 2;
@@ -603,7 +635,9 @@ pub func parse_blocks(lines: list[string], edits refs: Refs): Blocks {
 }
 
 # A paragraph (or a setext heading, or link reference definitions) starting
-# at lines[i]; appends it and returns the index after it.
+# at lines[i]; appends it and returns the index after it. It takes lines up
+# to a blank line, a line that interrupts a paragraph, or a table; a setext
+# underline ends it and makes it a heading.
 func parse_paragraph(lines: list[string], i: int, edits blocks: list[Block], edits refs: Refs): int {
     let n = lines.len();
     var para: list[string] = [trim_start_spaces(lines[i])];
