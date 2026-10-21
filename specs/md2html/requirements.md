@@ -69,11 +69,15 @@ result where I choose.
 3. Inline links and images `[text](destination "title")` and reference
    links (`[text][label]`, `[label][]`, `[label]`) SHALL be resolved; links
    SHALL not contain links; image alt text SHALL be the plain text.
-4. Autolinks `<scheme:...>` and `<user@host>` SHALL become links.
+4. Autolinks `<scheme:...>` and `<user@host>` SHALL become links. Link
+   destinations SHALL be percent-encoded as cmark does: every character
+   other than letters, digits, `-._~;/?:@&=+$,!*'()#%` becomes `%XX` per
+   UTF-8 byte.
 5. Backslash escapes of ASCII punctuation, hard line breaks (two trailing
    spaces or a backslash) and soft breaks SHALL follow CommonMark.
-6. Numeric entities and common named entities SHALL be decoded; unknown
-   ones SHALL be printed as text.
+6. Numeric entities (1 to 7 decimal or 1 to 6 hexadecimal digits) and
+   common named entities SHALL be decoded; unknown ones SHALL be printed as
+   text.
 7. Raw HTML SHALL be escaped, never passed through, and all text and
    attribute values SHALL be HTML-escaped.
 

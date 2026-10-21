@@ -24,7 +24,7 @@ definition that appears later in the document.
 | `source/cli/args.loup` | `Options`, `parse_args` |
 | `source/cli/usage.loup` | `usage()`, `version_line()` |
 | `source/cli/app.loup` | `run()`: parse, help/version, convert, exceptions to status 1 |
-| `source/commands/md2html.loup` | `run_md2html`, `convert`, `page_title`, `fill_template`, `DEFAULT_TEMPLATE` |
+| `source/commands/md2html.loup` | `run_md2html`, `convert`, `page_title`, `fill_template`, `default_template` |
 | `source/markdown/text.loup` | character classes, `escape_html`, indentation and tab columns, labels, `strip_tags`, `encode_url` |
 | `source/markdown/blocks.loup` | pass 1: `Block` enum, `Refs`, `parse_blocks`, `parse_document` |
 | `source/markdown/inlines.loup` | pass 2: `render_inline` (code spans, delimiter runs, brackets, links, autolinks, entities, breaks) |
@@ -85,8 +85,6 @@ HTML off, and so were 300 Markdown files of the Loup books and this series.
 - Link reference definitions must fit on one line.
 - Only the common named entities are decoded (numeric ones all are); other
   names are printed as text.
-- In link destinations only spaces and a few ASCII characters are
-  percent-encoded; non-ASCII characters are kept.
 - Not supported: HTML blocks, footnotes, task lists, strikethrough,
   extended autolinks (bare `www.` and URLs), heading IDs.
 

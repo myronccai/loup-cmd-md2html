@@ -30,6 +30,8 @@ func test_code_and_quote(): void {
 func test_table(): void {
     let want = "<table>\n<thead>\n<tr>\n<th style=\"text-align:right\">a</th>\n</tr>\n</thead>\n<tbody>\n<tr>\n<td style=\"text-align:right\">1</td>\n</tr>\n</tbody>\n</table>\n";
     expectEq(markdown_to_html("| a |\n|--:|\n| 1 |\n"), want, "aligned table");
+    let rows = "<table>\n<thead>\n<tr>\n<th>a</th>\n<th style=\"text-align:center\">b</th>\n</tr>\n</thead>\n<tbody>\n<tr>\n<td>1</td>\n<td style=\"text-align:center\">2</td>\n</tr>\n<tr>\n<td>3</td>\n<td style=\"text-align:center\"></td>\n</tr>\n</tbody>\n</table>\n";
+    expectEq(markdown_to_html("| a | b |\n|---|:-:|\n| 1 | 2 |\n| 3 |\n"), rows, "rows of two cells, a short row padded");
 }
 
 func test_first_heading(): void {

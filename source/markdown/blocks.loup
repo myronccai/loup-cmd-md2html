@@ -22,6 +22,8 @@
 
 from markdown.text import (chars_of, indent_of, expand_leading_tabs, strip_indent, remove_columns, is_blank, is_digit, trim_end_spaces, trim_start_spaces, normalize_label);
 
+## A node of the block tree. Leaf blocks keep their raw inline text, which
+## pass 2 renders; containers hold their children.
 pub enum Block {
     Heading(level: int, text: string),
     Paragraph(text: string),
@@ -35,28 +37,24 @@ pub enum Block {
     Table(aligns: list[string], header: list[string], cells: list[string]),
 }
 
-# Link reference definitions: label (normalised), destination, title.
+## Link reference definitions: label (normalised), destination, title.
 pub struct Refs {
     pub var labels: list[string];
     pub var urls: list[string];
     pub var titles: list[string];
 }
 
-# The blocks of some lines, and whether a blank line separated two of them
-# (which makes the list item holding them loose).
+## The blocks of some lines, and whether a blank line separated two of them
+## (which makes the list item holding them loose).
 pub struct Blocks {
     pub blocks: list[Block];
     pub gap: bool;
 }
 
+## A parsed document: its blocks and every reference definition in it.
 pub struct Document {
     pub blocks: list[Block];
     pub refs: Refs;
-}
-
-struct ListResult {
-    pub block: Block;
-    pub next: int;
 }
 
 # A list marker at the start of a line (after up to 3 spaces of indent).
@@ -69,11 +67,13 @@ struct Marker {
     pub width: int;
 }
 
+## An empty set of definitions.
 pub func new_refs(): Refs {
     let none: list[string] = [];
     return Refs(labels = none, urls = none, titles = none);
 }
 
+## The index of a label's definition in refs, or -1.
 pub func find_ref(refs: Refs, label: string): int {
     return refs.labels.index_of(normalize_label(label));
 }
@@ -248,9 +248,9 @@ func interrupts_paragraph(s: string): bool {
 
 # ---------------------------------------------------------------- tables
 
-# The cells of a table row: outer pipes dropped, split at unescaped pipes,
-# trimmed. An escaped \| becomes a plain | (even inside a code span, as in
-# GitHub's tables).
+## The cells of a table row: outer pipes dropped, split at unescaped pipes,
+## trimmed. An escaped \| becomes a plain | (even inside a code span, as in
+## GitHub's tables).
 pub func split_row(line: string): list[string] {
     var t = line.trim();
     if (t.startsWith("|")) {
@@ -299,16 +299,13 @@ func delimiter_align(cell: string): string {
             return "?";
         }
     }
-    if (left and right) {
-        return "center";
-    }
-    if (left) {
-        return "left";
-    }
-    if (right) {
-        return "right";
-    }
-    return "";
+    # Which ends carry a colon decides the alignment.
+    return match (left, right) {
+        (true, true) => "center",
+        (true, false) => "left",
+        (false, true) => "right",
+        (false, false) => "",
+    };
 }
 
 # The column alignments if lines[i] and lines[i + 1] start a table (a header
@@ -405,18 +402,15 @@ func make_blocks(blocks: list[Block], gap: bool): Blocks {
     return Blocks(blocks = blocks, gap = gap);
 }
 
-func make_list_result(block: Block, next: int): ListResult {
-    return ListResult(block = block, next = next);
-}
-
 # A list starting at lines[start]: consecutive items whose markers are of
 # the same kind (the same bullet, or ordered with the same delimiter). An
 # item's content column is the marker plus the spaces after it (just one
 # when there are five or more: the rest then make indented code); later
 # lines indented that far belong to the item with that indent removed, and
 # the item's lines are parsed recursively. The list is loose when a blank
-# line separates two items or two blocks inside an item.
-func parse_list(lines: list[string], start: int, edits refs: Refs): ListResult {
+# line separates two items or two blocks inside an item. Returns the list
+# block and the index of the first line after it.
+func parse_list(lines: list[string], start: int, edits refs: Refs): (Block, int) {
     let first = marker_of(content_of(lines[start]));
     var items: list[Block] = [];
     var tight = true;
@@ -468,7 +462,7 @@ func parse_list(lines: list[string], start: int, edits refs: Refs): ListResult {
                 break;
             }
             # A lazy continuation line of a paragraph.
-            let prev = item_lines[item_lines.len() - 1];
+            let prev = item_lines[-1];
             if (!is_blank(prev) and !interrupts_paragraph(content_of(l)) and table_aligns(lines, j).len() == 0) {
                 item_lines.push(trim_start_spaces(l));
                 j += 1;
@@ -477,7 +471,7 @@ func parse_list(lines: list[string], start: int, edits refs: Refs): ListResult {
             break;
         }
         var trailing = 0;
-        while (item_lines.len() > 1 and is_blank(item_lines[item_lines.len() - 1])) {
+        while (item_lines.len() > 1 and is_blank(item_lines[-1])) {
             item_lines.pop();
             trailing += 1;
         }
@@ -498,17 +492,17 @@ func parse_list(lines: list[string], start: int, edits refs: Refs): ListResult {
         }
     }
     if (first.ordered) {
-        return make_list_result(Block.OrderedList(start = first.number, tight = tight, items = items), i);
+        return (Block.OrderedList(start = first.number, tight = tight, items = items), i);
     }
-    return make_list_result(Block.BulletList(tight = tight, items = items), i);
+    return (Block.BulletList(tight = tight, items = items), i);
 }
 
-# Parses a run of lines (the document, or a container's content with its
-# markers stripped) in one pass. Each step looks at the first line of the
-# next block, decides its kind in CommonMark's order of precedence,
-# consumes all of its lines and moves i past them. `gap` records a blank
-# line between two blocks of this run (not before the first or after the
-# last), which is what makes a list item loose.
+## Parses a run of lines (the document, or a container's content with its
+## markers stripped) in one pass. Each step looks at the first line of the
+## next block, decides its kind in CommonMark's order of precedence,
+## consumes all of its lines and moves i past them. `gap` records a blank
+## line between two blocks of this run (not before the first or after the
+## last), which is what makes a list item loose.
 pub func parse_blocks(lines: list[string], edits refs: Refs): Blocks {
     var blocks: list[Block] = [];
     var gap = false;
@@ -539,10 +533,8 @@ pub func parse_blocks(lines: list[string], edits refs: Refs): Blocks {
                 end -= 1;
             }
             var code: list[string] = [];
-            var k = i;
-            while (k < end) {
+            for (k in i..end) {
                 code.push(remove_columns(lines[k], 4) + "\n");
-                k += 1;
             }
             blocks.push(Block.Code(info = "", text = code.join("")));
             i = end;
@@ -583,7 +575,7 @@ pub func parse_blocks(lines: list[string], edits refs: Refs): Blocks {
                             rest = rest.slice(1);
                         }
                         quoted.push(rest);
-                    } else if (quoted.len() > 0 and !is_blank(quoted[quoted.len() - 1]) and !interrupts_paragraph(t)) {
+                    } else if (quoted.len() > 0 and !is_blank(quoted[-1]) and !interrupts_paragraph(t)) {
                         quoted.push(trim_start_spaces(l));
                     } else {
                         break;
@@ -594,9 +586,9 @@ pub func parse_blocks(lines: list[string], edits refs: Refs): Blocks {
                 blocks.push(Block.Quote(children = inner.blocks));
                 i = j;
             } else if (marker_of(s).found) {
-                let result = parse_list(lines, i, edits: refs);
-                blocks.push(result.block);
-                i = result.next;
+                let (list, next) = parse_list(lines, i, edits: refs);
+                blocks.push(list);
+                i = next;
             } else if (aligns.len() > 0) {
                 # Body rows run to a blank line or the start of another
                 # block. Each row is padded or cut to the header's column
@@ -606,14 +598,12 @@ pub func parse_blocks(lines: list[string], edits refs: Refs): Blocks {
                 var j = i + 2;
                 while (j < n and !is_blank(lines[j]) and !interrupts_paragraph(content_of(lines[j]))) {
                     let row = split_row(lines[j]);
-                    var c = 0;
-                    while (c < aligns.len()) {
+                    for (c in 0..aligns.len()) {
                         if (c < row.len()) {
                             cells.push(row[c]);
                         } else {
                             cells.push("");
                         }
-                        c += 1;
                     }
                     j += 1;
                 }
@@ -688,18 +678,17 @@ func parse_paragraph(lines: list[string], i: int, edits blocks: list[Block], edi
     return j;
 }
 
-# Splits a document into lines and parses it.
+## Splits a document into lines (LF or CRLF) and parses it.
 pub func parse_document(source: string): Document {
     var lines: list[string] = [];
-    for (line in source.split("\n")) {
+    for (var line in source.split("\n")) {
         if (line.endsWith("\r")) {
-            lines.push(line.slice(0, line.len() - 1));
-        } else {
-            lines.push(line);
+            line = line.slice(0, line.len() - 1);
         }
+        lines.push(line);
     }
     # A final newline ends the last line; it does not start another one.
-    if (lines.len() > 0 and lines[lines.len() - 1].len() == 0) {
+    if (lines.len() > 0 and lines[-1].len() == 0) {
         lines.pop();
     }
     var refs = new_refs();

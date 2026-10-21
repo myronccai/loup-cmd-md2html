@@ -113,7 +113,14 @@ prints.
     does not lower); bind it first or loop;
   - check `exists`/`isDir` before reading or writing: native `IoError`s
     cannot be caught;
-  - `list.is_empty()` does not compile natively; use `len() == 0`.
+  - `list.is_empty()` does not compile natively; use `len() == 0`;
+  - give a comprehension's source list its type (`let parts: list[string] =
+    s.split(...)`): over an unannotated `let` it crashes natively.
+- A `"""` string cannot initialise a `const` (use a function, as
+  `default_template` does), and its last line has no newline.
+- A type alias works in its own module's signatures only: imported, it
+  is an "undefined type" in function signatures (`Html` in text.loup is
+  private for that reason).
 - `template` is a reserved word: the template option's field is
   `page_file`.
 - Struct fields read from another module must be `pub`; fields that are

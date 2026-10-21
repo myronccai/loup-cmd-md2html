@@ -16,10 +16,29 @@ from io.path import (basename, dirname);
 from markdown.text import (escape_html);
 from markdown.render import (markdown_to_html, first_heading);
 
-pub const DEFAULT_TEMPLATE: string = "<!DOCTYPE html>\n<html>\n<head>\n<meta charset=\"utf-8\">\n<title>{{title}}</title>\n</head>\n<body>\n{{body}}</body>\n</html>\n";
+## The page that -s writes when no -t template is given.
+##
+## A function rather than a const: a """ string is not a constant
+## expression for `loup run` and native builds. The text of a """ string
+## starts after the opening line and loses the indentation of the closing
+## """, and its last line has no newline, so the final one is added.
+pub func default_template(): string {
+    let page = """
+    <!DOCTYPE html>
+    <html>
+    <head>
+    <meta charset="utf-8">
+    <title>{{title}}</title>
+    </head>
+    <body>
+    {{body}}</body>
+    </html>
+    """;
+    return page + "\n";
+}
 
-# The page title: --title, else the first heading, else the file name
-# without its extension, else "Untitled". Returned as HTML.
+## The page title: --title, else the first heading, else the file name
+## without its extension, else "Untitled".
 pub func page_title(opts: Options, source: string): string {
     if (opts.title_given) {
         return escape_html(opts.title);
@@ -39,19 +58,18 @@ pub func page_title(opts: Options, source: string): string {
     return "Untitled";
 }
 
-# Fills {{title}} and {{body}} in a page template.
+## Fills {{title}} and {{body}} in a page template.
 pub func fill_template(layout: string, title: string, body: string): string {
     # Split on {{body}} first so that a {{title}} inside the body text is
-    # left alone.
-    let parts = layout.split("{{body}}");
-    var filled: list[string] = [];
-    for (part in parts) {
-        filled.push(part.replace("{{title}}", title));
-    }
+    # left alone. `parts` needs its type: natively, a comprehension over an
+    # unannotated `let` holding a split() result crashes.
+    let parts: list[string] = layout.split("{{body}}");
+    let filled: list[string] = [part.replace("{{title}}", title) for part in parts];
     return filled.join(body);
 }
 
-# The complete output for a source text.
+## The complete output for a source text: the HTML fragment, or with -s
+## the page `layout` filled with it.
 pub func convert(opts: Options, source: string, layout: string): string {
     let body = markdown_to_html(source);
     if (!opts.standalone) {
@@ -87,7 +105,7 @@ pub func run_md2html(opts: Options): int {
         source = readText(opts.input);
     }
 
-    var layout = DEFAULT_TEMPLATE;
+    var layout = default_template();
     if (opts.page_file.len() > 0) {
         let problem = read_problem(opts.page_file);
         if (problem.len() > 0) {

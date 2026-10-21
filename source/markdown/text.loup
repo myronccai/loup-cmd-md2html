@@ -11,6 +11,15 @@
 # Indentation follows CommonMark: a tab advances to the next multiple of 4
 # columns, and only leading tabs are ever expanded.
 
+from data.query import (percentEncode);
+
+# Text that is already HTML (escaped text, or markup md2html built), as
+# opposed to Markdown or plain text. An alias, so to the compiler it is a
+# string; in a signature it says which side of escape_html a value is on.
+# Private: in Loup 1.26.0 an imported alias cannot appear in the importing
+# module's function signatures ("undefined type"), only in `let`s.
+type Html = string;
+
 const PUNCTUATION: string = "!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~";
 const DIGITS: string = "0123456789";
 const LETTERS: string = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
@@ -23,12 +32,12 @@ pub func is_letter(ch: string): bool {
     return ch.len() == 1 and LETTERS.index_of(ch) >= 0;
 }
 
-# ASCII punctuation, the characters a backslash can escape.
+## ASCII punctuation, the characters a backslash can escape.
 pub func is_punctuation(ch: string): bool {
     return ch.len() == 1 and PUNCTUATION.index_of(ch) >= 0;
 }
 
-# Whitespace for the flanking rules; "" (the edge of the text) counts too.
+## Whitespace for the flanking rules; "" (the edge of the text) counts too.
 pub func is_space(ch: string): bool {
     return ch == "" or ch == " " or ch == "\t" or ch == "\n" or ch == "\r";
 }
@@ -41,8 +50,8 @@ pub func chars_of(text: string): list[string] {
     return chars;
 }
 
-# Escapes text for HTML content and attribute values.
-pub func escape_html(text: string): string {
+## Escapes text for HTML content and attribute values.
+pub func escape_html(text: string): Html {
     if (text.index_of("&") < 0 and text.index_of("<") < 0 and text.index_of(">") < 0 and text.index_of("\"") < 0) {
         return text;
     }
@@ -63,7 +72,7 @@ pub func escape_html(text: string): string {
     return parts.join("");
 }
 
-# Number of leading spaces, with a tab advancing to the next multiple of 4.
+## Number of leading spaces, with a tab advancing to the next multiple of 4.
 pub func indent_of(line: string): int {
     var width = 0;
     for (ch in line) {
@@ -78,7 +87,7 @@ pub func indent_of(line: string): int {
     return width;
 }
 
-# The line with its leading tabs expanded to spaces (tab stops of 4).
+## The line with its leading tabs expanded to spaces (tab stops of 4).
 pub func expand_leading_tabs(line: string): string {
     if (line.index_of("\t") < 0) {
         return line;
@@ -97,9 +106,9 @@ pub func expand_leading_tabs(line: string): string {
     return " ".repeat(width) + chars.slice(i).join("");
 }
 
-# Removes n columns of leading whitespace (fewer if the line has less). A
-# tab counts up to the next multiple of 4; a tab that is only partly
-# removed leaves the rest of its width as spaces. Later tabs are kept.
+## Removes n columns of leading whitespace (fewer if the line has less). A
+## tab counts up to the next multiple of 4; a tab that is only partly
+## removed leaves the rest of its width as spaces. Later tabs are kept.
 pub func remove_columns(line: string, n: int): string {
     var col = 0;
     var i = 0;
@@ -121,7 +130,7 @@ pub func remove_columns(line: string, n: int): string {
     return chars.slice(i).join("");
 }
 
-# Removes up to n leading spaces.
+## Removes up to n leading spaces.
 pub func strip_indent(line: string, n: int): string {
     var i = 0;
     while (i < n and i < line.len() and line.slice(i, i + 1) == " ") {
@@ -150,8 +159,8 @@ pub func trim_start_spaces(text: string): string {
     return text.slice(start);
 }
 
-# A link label normalised for matching: lower case, inner whitespace
-# collapsed to one space, trimmed.
+## A link label normalised for matching: lower case, inner whitespace
+## collapsed to one space, trimmed.
 pub func normalize_label(label: string): string {
     var parts: list[string] = [];
     for (word in label.toLowerCase().split(" ")) {
@@ -165,9 +174,9 @@ pub func normalize_label(label: string): string {
     return parts.join(" ");
 }
 
-# The text of some HTML with its tags removed; an image counts as its alt
-# text. Entities stay escaped, so the result is still HTML.
-pub func strip_tags(html: string): string {
+## The text of some HTML with its tags removed; an image counts as its alt
+## text. Entities stay escaped, so the result is still HTML.
+pub func strip_tags(html: Html): Html {
     if (html.index_of("<") < 0) {
         return html;
     }
@@ -197,35 +206,14 @@ pub func strip_tags(html: string): string {
     return parts.join("");
 }
 
-# Percent-encodes the characters that may not appear in an href as is
-# (spaces, and the few ASCII characters browsers reject); everything else,
-# including existing %XX escapes, is kept.
+## A link destination as it goes into an href, percent-encoded as cmark
+## does it: letters, digits, `-._~`, the URL delimiters and `%` (so that
+## existing %XX escapes survive) are kept, and every other character becomes
+## %XX, one escape per UTF-8 byte (`é` is %C3%A9). escape_html still has to
+## run on the result for the `&` it keeps.
 pub func encode_url(url: string): string {
-    var parts: list[string] = [];
-    for (ch in url) {
-        if (ch == " ") {
-            parts.push("%20");
-        } else if (ch == "\\") {
-            parts.push("%5C");
-        } else if (ch == "`") {
-            parts.push("%60");
-        } else if (ch == "{") {
-            parts.push("%7B");
-        } else if (ch == "}") {
-            parts.push("%7D");
-        } else if (ch == "|") {
-            parts.push("%7C");
-        } else if (ch == "^") {
-            parts.push("%5E");
-        } else if (ch == "\"") {
-            parts.push("%22");
-        } else if (ch == "<") {
-            parts.push("%3C");
-        } else if (ch == ">") {
-            parts.push("%3E");
-        } else {
-            parts.push(ch);
-        }
-    }
-    return parts.join("");
+    # percentEncode always keeps letters, digits and -._~; these are the
+    # characters kept besides them.
+    const KEEP: string = ";/?:@&=+$,!*'()#%";
+    return percentEncode(url, KEEP);
 }

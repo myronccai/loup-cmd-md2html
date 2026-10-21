@@ -156,7 +156,8 @@ for a usage error.
 | link reference definitions | |
 
 Raw HTML is escaped rather than passed through, so the output is safe to
-embed in a page. Not supported: HTML blocks, multi-line reference
+embed in a page. Link destinations are percent-encoded as cmark does
+(`[café](/menü)` gives `href="/men%C3%BC"`). Not supported: HTML blocks, multi-line reference
 definitions, footnotes, task lists, strikethrough, bare-URL autolinks and
 heading IDs.
 

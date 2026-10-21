@@ -39,6 +39,8 @@ func test_links_and_images(): void {
     expectEq(html("[x](<a b>)"), "<a href=\"a%20b\">x</a>", "angle destination");
     expectEq(html("<http://e.com/?a&b>"), "<a href=\"http://e.com/?a&amp;b\">http://e.com/?a&amp;b</a>", "autolink");
     expectEq(html("[no](link"), "[no](link", "unclosed");
+    expectEq(html("[é](/café \"t\")"), "<a href=\"/caf%C3%A9\" title=\"t\">é</a>", "non-ASCII destination");
+    expectEq(html("<https://ex.org/ü>"), "<a href=\"https://ex.org/%C3%BC\">https://ex.org/ü</a>", "non-ASCII autolink");
 }
 
 func test_reference_links(): void {
@@ -50,6 +52,8 @@ func test_escapes_and_entities(): void {
     expectEq(html("\\*x\\* \\a"), "*x* \\a", "escapes");
     expectEq(html("&amp; &copy; &#65; &bogus; &"), "&amp; © A &amp;bogus; &amp;", "entities");
     expectEq(html("<b>"), "&lt;b&gt;", "raw HTML is escaped");
+    expectEq(html("&#x41; &#x0000041; &#0000065; &#12345678;"), "A &amp;#x0000041; A &amp;#12345678;", "6 hex or 7 decimal digits at most");
+    expectEq(html("&infin;&ne;&hellip;"), "∞≠…", "named entities from the table");
 }
 
 func test_line_breaks(): void {

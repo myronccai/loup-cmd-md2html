@@ -40,6 +40,7 @@ func test_leaf_blocks(): void {
     expectEq(kinds("# a\n\npara\n\n---\n\n    code\n"), "h1 p hr code", "leaf blocks");
     expectEq(kinds("Title\n=====\nSub\n---"), "h1 h2", "setext headings");
     expectEq(kinds("```\nx\n```\n~~~\ny\n~~~"), "code code", "fences");
+    expectEq(kinds("# a\r\n\r\npara\r\n"), "h1 p", "CRLF line endings");
 }
 
 func test_interruptions(): void {

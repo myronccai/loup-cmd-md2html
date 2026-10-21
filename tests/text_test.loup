@@ -39,6 +39,10 @@ func test_strip_tags(): void {
 func test_misc(): void {
     expectEq(encode_url("a b|c"), "a%20b%7Cc", "encode");
     expectEq(encode_url("/path?q=1&r=%20"), "/path?q=1&r=%20", "kept");
+    expectEq(encode_url("/menü/café?q=crème"), "/men%C3%BC/caf%C3%A9?q=cr%C3%A8me", "UTF-8 bytes");
+    expectEq(encode_url("😀"), "%F0%9F%98%80", "four-byte character");
+    expectEq(encode_url("a[1]{2}\\`^\"<>"), "a%5B1%5D%7B2%7D%5C%60%5E%22%3C%3E", "ASCII that cmark encodes");
+    expectEq(encode_url("-._~;/?:@&=+$,!*'()#%"), "-._~;/?:@&=+$,!*'()#%", "what cmark keeps");
     expect(is_punctuation("*") and is_punctuation("~") and !is_punctuation("a"), "punctuation");
     expectEq(trim_end_spaces("x \t "), "x", "trim end");
 }

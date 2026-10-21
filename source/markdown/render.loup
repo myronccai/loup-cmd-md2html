@@ -45,8 +45,7 @@ func render_item(children: list[Block], tight: bool, refs: Refs): string {
     if (children.len() > 0 and !(tight and is_paragraph(children[0]))) {
         parts.push("\n");
     }
-    var i = 0;
-    while (i < children.len()) {
+    for (i in 0..children.len()) {
         let child = children[i];
         if (tight and is_paragraph(child)) {
             match child {
@@ -63,7 +62,6 @@ func render_item(children: list[Block], tight: bool, refs: Refs): string {
         } else {
             parts.push(render_block(child, refs));
         }
-        i += 1;
     }
     parts.push("</li>\n");
     return parts.join("");
@@ -91,27 +89,24 @@ func align_attr(align: string): string {
     return " style=\"text-align:" + align + "\"";
 }
 
+# The body cells come row by row, `aligns.len()` of them per row (the
+# parser pads or cuts every row to the header's width), so the row loop
+# steps through `cells` one row's width at a time.
 func render_table(aligns: list[string], header: list[string], cells: list[string], refs: Refs): string {
+    let width = aligns.len();
     var parts: list[string] = ["<table>\n<thead>\n<tr>\n"];
-    var c = 0;
-    while (c < aligns.len()) {
+    for (c in 0..width) {
         parts.push("<th" + align_attr(aligns[c]) + ">" + render_inline(header[c], refs) + "</th>\n");
-        c += 1;
     }
     parts.push("</tr>\n</thead>\n");
     if (cells.len() > 0) {
         parts.push("<tbody>\n");
-        var i = 0;
-        while (i < cells.len()) {
-            if (i % aligns.len() == 0) {
-                parts.push("<tr>\n");
+        for (var row = 0; row < cells.len(); row += width) {
+            parts.push("<tr>\n");
+            for (c in 0..width) {
+                parts.push("<td" + align_attr(aligns[c]) + ">" + render_inline(cells[row + c], refs) + "</td>\n");
             }
-            let col = i % aligns.len();
-            parts.push("<td" + align_attr(aligns[col]) + ">" + render_inline(cells[i], refs) + "</td>\n");
-            if (col == aligns.len() - 1) {
-                parts.push("</tr>\n");
-            }
-            i += 1;
+            parts.push("</tr>\n");
         }
         parts.push("</tbody>\n");
     }
@@ -119,9 +114,11 @@ func render_table(aligns: list[string], header: list[string], cells: list[string
     return parts.join("");
 }
 
-# Every arm returns from a block (statement form) instead of the match
-# being an expression: in native builds of Loup 1.26.0 a match expression
-# whose arms build new strings returns freed memory.
+## One block (and its children) as HTML.
+##
+## Every arm returns from a block (statement form) instead of the match
+## being an expression: in native builds of Loup 1.26.0 a match expression
+## whose arms build new strings returns freed memory.
 pub func render_block(block: Block, refs: Refs): string {
     match block {
         Block.Heading(level, text) => {
@@ -164,6 +161,7 @@ pub func render_block(block: Block, refs: Refs): string {
     }
 }
 
+## A list of blocks as HTML, one after the other.
 pub func render_blocks(blocks: list[Block], refs: Refs): string {
     var parts: list[string] = [];
     for (block in blocks) {
@@ -172,15 +170,15 @@ pub func render_blocks(blocks: list[Block], refs: Refs): string {
     return parts.join("");
 }
 
-# The whole conversion: Markdown text to an HTML fragment.
+## The whole conversion: Markdown text to an HTML fragment.
 pub func markdown_to_html(source: string): string {
     let doc = parse_document(source);
     return render_blocks(doc.blocks, doc.refs);
 }
 
-# The plain text of the first heading of the highest level present (the
-# first h1, else the first h2, and so on), for a page title; "" when there
-# is none.
+## The text of the first heading of the highest level present (the first
+## h1, else the first h2, and so on), for a page title; "" when there is
+## none. Tags are stripped but entities stay, so the result is still HTML.
 pub func first_heading(source: string): string {
     let doc = parse_document(source);
     var best = "";

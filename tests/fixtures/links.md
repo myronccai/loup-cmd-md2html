@@ -11,5 +11,7 @@
 
 [ref] [Ref][] [text][ref] [case][REF] [missing] [missing][]
 
+[café](/menü/café?q=crème&x=[1] "Ü") <https://example.org/é>
+
 [ref]: /ref-url "Ref Title"
 [unused]: <http://x.y/z>

@@ -9,7 +9,7 @@
 
 from debug.assert import (expect, expectEq);
 from cli.args import (parse_args);
-from commands.md2html import (page_title, fill_template, convert, DEFAULT_TEMPLATE);
+from commands.md2html import (page_title, fill_template, convert, default_template);
 
 func test_fill_template(): void {
     expectEq(fill_template("<t>{{title}}</t>{{body}}", "T", "<p>b</p>"), "<t>T</t><p>b</p>", "both");
@@ -24,9 +24,14 @@ func test_page_title(): void {
     expectEq(page_title(parse_args(["-s"]).unwrap(), "text"), "Untitled", "nothing else");
 }
 
+func test_default_template(): void {
+    let want = "<!DOCTYPE html>\n<html>\n<head>\n<meta charset=\"utf-8\">\n<title>{{title}}</title>\n</head>\n<body>\n{{body}}</body>\n</html>\n";
+    expectEq(default_template(), want, "no indentation, one final newline");
+}
+
 func test_convert(): void {
-    expectEq(convert(parse_args(["x.md"]).unwrap(), "*a*", DEFAULT_TEMPLATE), "<p><em>a</em></p>\n", "fragment");
-    let page = convert(parse_args(["-s"]).unwrap(), "# T\n", DEFAULT_TEMPLATE);
+    expectEq(convert(parse_args(["x.md"]).unwrap(), "*a*", default_template()), "<p><em>a</em></p>\n", "fragment");
+    let page = convert(parse_args(["-s"]).unwrap(), "# T\n", default_template());
     expect(page.startsWith("<!DOCTYPE html>\n<html>\n<head>\n<meta charset=\"utf-8\">\n<title>T</title>"), "page head");
     expect(page.endsWith("<body>\n<h1>T</h1>\n</body>\n</html>\n"), "page body");
 }
